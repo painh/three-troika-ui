@@ -133,7 +133,7 @@ export class UIText extends UIElement {
     return this.textMesh;
   }
 
-  override update(): void {
+  override update(_deltaTime?: number): void {
     // troika는 자동으로 업데이트됨
   }
 

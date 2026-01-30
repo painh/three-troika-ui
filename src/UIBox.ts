@@ -9,6 +9,8 @@ export interface UIBoxConfig {
   borderRadius?: number;
   borderWidth?: number;
   borderColor?: number;
+  /** 호버 시 색상 */
+  hoverColor?: number;
 }
 
 /**
@@ -26,6 +28,8 @@ export class UIBox extends UIElement {
   private _borderRadius: number = 0;
   private _borderWidth: number = 0;
   private _borderColor: number = 0xffffff;
+  private _hoverColor: number | null = null;
+  private _isHovered: boolean = false;
 
   constructor(config: UIBoxConfig = {}) {
     super();
@@ -37,6 +41,7 @@ export class UIBox extends UIElement {
     this._borderRadius = config.borderRadius ?? 0;
     this._borderWidth = config.borderWidth ?? 0;
     this._borderColor = config.borderColor ?? 0xffffff;
+    this._hoverColor = config.hoverColor ?? null;
 
     // 배경 메시 생성
     this.material = new THREE.MeshBasicMaterial({
@@ -206,6 +211,34 @@ export class UIBox extends UIElement {
 
   override getInteractiveMeshes(): THREE.Mesh[] {
     return [this.backgroundMesh];
+  }
+
+  /**
+   * 호버 색상 설정
+   */
+  setHoverColor(color: number | null): this {
+    this._hoverColor = color;
+    return this;
+  }
+
+  /**
+   * 호버 상태 설정
+   */
+  setHovered(hovered: boolean): this {
+    if (this._isHovered === hovered) return this;
+    this._isHovered = hovered;
+
+    if (this._hoverColor !== null) {
+      this.material.color.setHex(hovered ? this._hoverColor : this._color);
+    }
+    return this;
+  }
+
+  /**
+   * 호버 상태 확인
+   */
+  get isHovered(): boolean {
+    return this._isHovered;
   }
 
   dispose(): void {
