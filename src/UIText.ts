@@ -20,6 +20,7 @@ export interface UITextConfig {
  */
 export class UIText extends UIElement {
   private textMesh: Text;
+  private _onSyncCallback: (() => void) | null = null;
 
   constructor(config: UITextConfig = {}) {
     super();
@@ -48,7 +49,7 @@ export class UIText extends UIElement {
     }
 
     // 텍스트 동기화
-    this.textMesh.sync();
+    this.syncWithCallback();
     this.add(this.textMesh);
   }
 
@@ -57,8 +58,27 @@ export class UIText extends UIElement {
    */
   setText(text: string): this {
     this.textMesh.text = text;
-    this.textMesh.sync();
+    this.syncWithCallback();
     return this;
+  }
+
+  /**
+   * sync 완료 시 콜백 설정
+   */
+  onSync(callback: () => void): this {
+    this._onSyncCallback = callback;
+    return this;
+  }
+
+  /**
+   * 콜백과 함께 sync 실행
+   */
+  private syncWithCallback(): void {
+    this.textMesh.sync(() => {
+      if (this._onSyncCallback) {
+        this._onSyncCallback();
+      }
+    });
   }
 
   /**
@@ -74,7 +94,7 @@ export class UIText extends UIElement {
    */
   setFontSize(size: number): this {
     this.textMesh.fontSize = size;
-    this.textMesh.sync();
+    this.syncWithCallback();
     return this;
   }
 
@@ -83,7 +103,7 @@ export class UIText extends UIElement {
    */
   setMaxWidth(width: number): this {
     this.textMesh.maxWidth = width;
-    this.textMesh.sync();
+    this.syncWithCallback();
     return this;
   }
 
@@ -102,7 +122,7 @@ export class UIText extends UIElement {
   setAlign(anchorX: 'left' | 'center' | 'right', anchorY: 'top' | 'middle' | 'bottom'): this {
     this.textMesh.anchorX = anchorX;
     this.textMesh.anchorY = anchorY;
-    this.textMesh.sync();
+    this.syncWithCallback();
     return this;
   }
 
