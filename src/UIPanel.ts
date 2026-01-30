@@ -187,21 +187,31 @@ export class UIPanel extends UIElement {
     for (const child of this._children) {
       const childMainSize = this._direction === 'horizontal' ? child.width : child.height;
       const childCrossSize = this._direction === 'horizontal' ? child.height : child.width;
-      const crossSize = this._direction === 'horizontal' ? contentHeight : contentWidth;
 
       // 교차축 위치
       let crossPos: number;
-      const crossStart = this._direction === 'horizontal' ? -this._height / 2 + paddingBottom : -this._width / 2 + paddingLeft;
 
       switch (this._align) {
         case 'start':
-          crossPos = crossStart + childCrossSize / 2;
+          if (this._direction === 'horizontal') {
+            // horizontal: Y축이 교차축, start = bottom
+            crossPos = -this._height / 2 + paddingBottom + childCrossSize / 2;
+          } else {
+            // vertical: X축이 교차축, start = left
+            crossPos = -this._width / 2 + paddingLeft + childCrossSize / 2;
+          }
           break;
         case 'center':
-          crossPos = crossStart + crossSize / 2;
+          crossPos = 0; // 중앙 정렬
           break;
         case 'end':
-          crossPos = crossStart + crossSize - childCrossSize / 2;
+          if (this._direction === 'horizontal') {
+            // horizontal: Y축이 교차축, end = top
+            crossPos = this._height / 2 - paddingTop - childCrossSize / 2;
+          } else {
+            // vertical: X축이 교차축, end = right
+            crossPos = this._width / 2 - paddingRight - childCrossSize / 2;
+          }
           break;
       }
 

@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+// @ts-ignore - troika-three-text doesn't have type definitions
 import { Text } from 'troika-three-text';
 import { UIElement } from './UIElement';
 
