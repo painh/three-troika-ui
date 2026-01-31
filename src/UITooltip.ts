@@ -278,6 +278,20 @@ export class UITooltip extends UIElement {
     return this.visible;
   }
 
+  /**
+   * 툴팁 콘텐츠 높이 반환
+   */
+  getContentHeight(): number {
+    return this.contentHeight;
+  }
+
+  /**
+   * 툴팁 콘텐츠 너비 반환
+   */
+  getContentWidth(): number {
+    return this.contentWidth;
+  }
+
   override update(_deltaTime?: number): void {
     // 자동 업데이트
   }
