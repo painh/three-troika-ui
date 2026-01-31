@@ -217,7 +217,7 @@ export class UITooltip extends UIElement {
    */
   private updatePosition(): void {
     if (!this.viewBounds) {
-      this.position.set(this.anchorX + this.config.offset.x, this.anchorY + this.config.offset.y, 10);
+      this.position.set(this.anchorX + this.config.offset.x, this.anchorY + this.config.offset.y, 0);
       return;
     }
 
@@ -251,7 +251,8 @@ export class UITooltip extends UIElement {
       tooltipY = -halfViewH + halfH + 0.1;
     }
 
-    this.position.set(tooltipX, tooltipY, 10);
+    // z=0 (부모에서 z 위치 결정)
+    this.position.set(tooltipX, tooltipY, 0);
   }
 
   /**
