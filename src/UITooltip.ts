@@ -52,6 +52,9 @@ export class UITooltip extends UIElement {
   // 화면 경계
   private viewBounds: { width: number; height: number } | null = null;
 
+  // 텍스트 sync 카운터
+  private pendingSyncs: number = 0;
+
   // 앵커 위치 (슬롯 위치 기준)
   private anchorX: number = 0;
   private anchorY: number = 0;
@@ -128,6 +131,7 @@ export class UITooltip extends UIElement {
   private rebuildContent(): void {
     // 기존 텍스트를 풀로 반환
     for (const text of this.textElements) {
+      text.onSync(() => {}); // 콜백 제거
       this.remove(text);
       this.textPool.push(text);
     }
@@ -139,33 +143,85 @@ export class UITooltip extends UIElement {
     }
 
     const padding = this.config.padding;
-    const lineHeight = this.config.fontSize * 1.4;
-    let maxTextWidth = 0;
-    let yPos = 0;
 
-    // 텍스트 생성
+    // sync 완료 전까지 숨김
+    this.visible = false;
+
+    // 텍스트 생성 및 sync 대기
+    this.pendingSyncs = this.lines.length;
+
     for (let i = 0; i < this.lines.length; i++) {
       const line = this.lines[i];
       const text = this.getTextFromPool();
+      const fontSize = line.fontSize ?? this.config.fontSize;
 
-      text.setText(line.text);
       text.setColor(line.color ?? this.config.textColor);
-      text.setFontSize(line.fontSize ?? this.config.fontSize);
+      text.setFontSize(fontSize);
       text.setAlign('left', 'top');
+      // maxWidth 설정으로 텍스트가 잘리도록 함
+      text.setMaxWidth(this.config.maxWidth - padding * 2);
 
-      // 텍스트 너비 추정 (대략적)
-      const estimatedWidth = line.text.length * (line.fontSize ?? this.config.fontSize) * 0.5;
-      maxTextWidth = Math.max(maxTextWidth, Math.min(estimatedWidth, this.config.maxWidth - padding * 2));
+      // sync 완료 콜백 설정
+      text.onSync(() => {
+        this.pendingSyncs--;
+        if (this.pendingSyncs <= 0) {
+          this.updateLayout();
+          this.visible = true;
+        }
+      });
+
+      // setText를 마지막에 호출 (sync 트리거)
+      text.setText(line.text);
 
       this.textElements.push(text);
       this.add(text);
+    }
+  }
 
-      yPos += lineHeight;
+  /**
+   * 실제 텍스트 크기로 레이아웃 업데이트
+   */
+  private updateLayout(): void {
+    const padding = this.config.padding;
+    let maxTextWidth = 0;
+    let totalHeight = 0;
+
+    for (let i = 0; i < this.textElements.length; i++) {
+      const text = this.textElements[i];
+      const fontSize = this.lines[i].fontSize ?? this.config.fontSize;
+
+      // troika에서 실제 렌더링된 텍스트 크기 가져오기
+      const textMesh = text.text;
+      const textInfo = textMesh.textRenderInfo;
+
+      if (textInfo) {
+        const actualWidth = (textInfo.blockBounds?.[2] ?? 0) - (textInfo.blockBounds?.[0] ?? 0);
+        const actualHeight = (textInfo.blockBounds?.[3] ?? 0) - (textInfo.blockBounds?.[1] ?? 0);
+        maxTextWidth = Math.max(maxTextWidth, actualWidth);
+        totalHeight += actualHeight > 0 ? actualHeight + fontSize * 0.4 : fontSize * 1.4;
+      } else {
+        // fallback: 추정 크기
+        let charCount = 0;
+        for (const char of this.lines[i].text) {
+          charCount += char.charCodeAt(0) > 255 ? 1.5 : 1;
+        }
+        maxTextWidth = Math.max(maxTextWidth, charCount * fontSize * 0.55);
+        totalHeight += fontSize * 1.4;
+      }
     }
 
-    // 컨텐츠 크기 계산
+    // 크기 설정
     this.contentWidth = Math.min(maxTextWidth + padding * 2, this.config.maxWidth);
-    this.contentHeight = yPos + padding * 2;
+    this.contentHeight = totalHeight + padding * 2;
+
+    this.applyLayout();
+  }
+
+  /**
+   * 레이아웃 적용 (배경 크기 및 텍스트 위치)
+   */
+  private applyLayout(): void {
+    const padding = this.config.padding;
 
     // 배경 크기 업데이트
     this.background.setSize(this.contentWidth, this.contentHeight);
@@ -181,8 +237,6 @@ export class UITooltip extends UIElement {
       text.position.set(startX, currentY, 0.01);
       currentY -= fontSize * 1.4;
     }
-
-    this.visible = true;
   }
 
   /**
