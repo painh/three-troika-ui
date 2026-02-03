@@ -203,6 +203,15 @@ export class UIButton extends UIElement {
   }
 
   /**
+   * 텍스트 색상 설정
+   */
+  setTextColor(color: number): this {
+    this.config.textColor = color;
+    this.updateAppearance();
+    return this;
+  }
+
+  /**
    * 크기 설정
    */
   override setSize(width: number, height: number): this {

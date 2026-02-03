@@ -46,10 +46,13 @@ export class UICamera {
   }
 
   /**
-   * 뷰 크기 반환
+   * 뷰 크기 반환 (resize 후 실제 카메라 뷰 크기)
    */
   getViewSize(): { width: number; height: number } {
-    return { width: this.viewWidth, height: this.viewHeight };
+    return {
+      width: this.camera.right - this.camera.left,
+      height: this.camera.top - this.camera.bottom,
+    };
   }
 
   /**
