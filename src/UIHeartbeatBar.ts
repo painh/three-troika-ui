@@ -902,10 +902,11 @@ export class UIHeartbeatBar extends UIElement {
 
     // 코어 사이즈도 펄싱
     const baseCoreSize = 0.7;
-    this.leftFlareMaterial.uniforms.uCoreSize.value = baseCoreSize + leftPulse * 0.3;
+    const minMaxCoreSize = baseCoreSize * 1.5;  // min/max 플레어 코어 1.5배
+    this.leftFlareMaterial.uniforms.uCoreSize.value = minMaxCoreSize + leftPulse * 0.45;  // 1.5배
     this.currentFlareMaterial.uniforms.uCoreSize.value = baseCoreSize + currentPulse * 0.3;
     this.delayedFlareMaterial.uniforms.uCoreSize.value = 0.6 + delayedPulse * 0.3;
-    this.rightFlareMaterial.uniforms.uCoreSize.value = 0.5 + rightPulse * 0.2;
+    this.rightFlareMaterial.uniforms.uCoreSize.value = (0.5 * 1.5) + rightPulse * 0.3;  // 1.5배
 
     // 피격 시 녹색 플레어들(왼쪽, 현재)만 색상 변경
     // 오른쪽 플레어는 항상 어두운 색 유지
