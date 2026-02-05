@@ -3,6 +3,7 @@ import {
   Mesh,
   PlaneGeometry,
   MeshBasicMaterial,
+  ShaderMaterial,
   RingGeometry,
   CircleGeometry,
   TextureLoader,
@@ -11,8 +12,117 @@ import {
   SRGBColorSpace,
   BufferGeometry,
   BufferAttribute,
+  Color,
+  AdditiveBlending,
 } from 'three';
 import { UIText } from './UIText';
+
+// Solar Corona 쉐이더 - 일식의 금환고리 효과
+const coronaVertexShader = `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const coronaFragmentShader = `
+  uniform float uTime;
+  uniform float uProgress; // 0: 시작(작음), 1: 완전히 펼쳐짐
+  uniform vec3 uColor;
+  uniform float uOpacity;
+
+  varying vec2 vUv;
+
+  // 노이즈 함수
+  float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+  }
+
+  float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+
+    float a = hash(i);
+    float b = hash(i + vec2(1.0, 0.0));
+    float c = hash(i + vec2(0.0, 1.0));
+    float d = hash(i + vec2(1.0, 1.0));
+
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+  }
+
+  float fbm(vec2 p) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    for (int i = 0; i < 5; i++) {
+      value += amplitude * noise(p);
+      p *= 2.0;
+      amplitude *= 0.5;
+    }
+    return value;
+  }
+
+  void main() {
+    vec2 center = vec2(0.5, 0.5);
+    vec2 uv = vUv - center;
+
+    float dist = length(uv) * 2.0;
+    float angle = atan(uv.y, uv.x);
+
+    // 기본 반경 (더 작게)
+    float baseInner = 0.65;
+    float baseOuter = 0.88;
+
+    // 외곽 일렁임 - 각도에 따라 불규칙하게 타오름
+    float flameNoise1 = fbm(vec2(angle * 2.0 + uTime * 1.2, uTime * 0.8)) * 0.12;
+    float flameNoise2 = fbm(vec2(angle * 3.5 - uTime * 0.9, uTime * 1.1)) * 0.08;
+    float flameNoise3 = fbm(vec2(angle * 5.0 + uTime * 1.5, uTime * 0.6)) * 0.06;
+    float totalFlame = flameNoise1 + flameNoise2 + flameNoise3;
+
+    // 내부/외부 반경 (progress에 따라 스케일 + 일렁임)
+    float innerRadius = baseInner * uProgress;
+    float outerRadius = (baseOuter + totalFlame) * uProgress;
+
+    // 부드러운 링 마스크
+    float innerEdge = smoothstep(innerRadius - 0.06, innerRadius + 0.03, dist);
+    float outerEdge = 1.0 - smoothstep(outerRadius - 0.03, outerRadius + 0.08, dist);
+    float ringMask = innerEdge * outerEdge;
+
+    // 중심부 밝기 (안쪽이 훨씬 더 밝음 - 빛 뿜어지는 느낌)
+    float coreBrightness = 1.0 - smoothstep(innerRadius, outerRadius * 0.75, dist);
+    coreBrightness = pow(coreBrightness, 0.5) * 0.8 + 0.6; // 더 밝게
+
+    // 외곽 글로우 (타오르는 느낌)
+    float outerGlow = smoothstep(baseOuter * 0.7 * uProgress, outerRadius, dist);
+    float glowIntensity = outerGlow * (0.4 + totalFlame * 2.5);
+
+    // 전체 강도 (더 밝게)
+    float intensity = ringMask * coreBrightness * 1.5 + glowIntensity * ringMask;
+
+    // 미세한 펄스 (숨쉬는 느낌)
+    float pulse = sin(uTime * 2.5) * 0.08 + 0.95;
+    intensity *= pulse;
+
+    // 중앙 코어 추가 밝기 (빛 뿜어지는 핵심부)
+    float coreGlow = 1.0 - smoothstep(innerRadius * 0.8, innerRadius * 1.1, dist);
+    coreGlow = pow(coreGlow, 2.0) * 0.6;
+    intensity += coreGlow * ringMask;
+
+    vec3 finalColor = uColor * intensity;
+    float alpha = intensity * uOpacity * uProgress;
+
+    // 중앙부는 더 밝은 흰색으로
+    vec3 brightCore = vec3(1.0, 1.0, 0.95);
+    finalColor = mix(finalColor, brightCore * intensity, coreGlow * 0.5);
+
+    // 외곽으로 갈수록 색상 변화 (약간 주황빛)
+    vec3 outerTint = vec3(1.0, 0.85, 0.6);
+    finalColor = mix(finalColor, finalColor * outerTint, outerGlow * 0.4);
+
+    gl_FragColor = vec4(finalColor, alpha);
+  }
+`;
 
 export interface UICircularGaugeConfig {
   size: number; // 전체 크기
@@ -76,21 +186,17 @@ export class UICircularGauge extends Group {
   // 하단 라벨
   private labelText: UIText | null = null;
 
-  // 준비 완료 글로우
-  private glowRing: Mesh;
-  private glowMaterial: MeshBasicMaterial;
+  // Solar Corona 효과 (일식 금환고리)
+  private coronaMesh: Mesh | null = null;
+  private coronaMaterial: ShaderMaterial | null = null;
+  private coronaTime: number = 0;
+  private coronaProgress: number = 0; // 0: 숨김, 1: 완전히 표시
+  private coronaTargetProgress: number = 0;
+  private coronaAnimSpeed: number = 4; // 애니메이션 속도
 
   // 상태
   private progress: number = 0; // 0~1
   private isReady: boolean = false;
-  private glowPulse: number = 0;
-
-  // Sweep + Trail 효과
-  private sweepRing: Mesh | null = null;
-  private sweepMaterial: MeshBasicMaterial | null = null;
-  private sweepAngle: number = 0; // 현재 sweep 각도
-  private isSweeping: boolean = false;
-  private sweepSpeed: number = 8; // 라디안/초 (약 0.8초에 한 바퀴)
 
   // 키 힌트
   private keyHint: UIText | null = null;
@@ -161,24 +267,8 @@ export class UICircularGauge extends Group {
     this.gaugeRing.rotation.z = Math.PI / 2; // 12시 방향에서 시작
     this.add(this.gaugeRing);
 
-    // 글로우 링 (준비 완료 시)
-    const glowGeometry = new RingGeometry(
-      outerRadius,
-      outerRadius + 0.1,
-      segments!
-    );
-    this.glowMaterial = new MeshBasicMaterial({
-      color: this.config.readyGlowColor,
-      side: DoubleSide,
-      transparent: true,
-      opacity: 0,
-    });
-    this.glowRing = new Mesh(glowGeometry, this.glowMaterial);
-    this.glowRing.position.z = 0.02;
-    this.add(this.glowRing);
-
-    // Sweep 링 (준비 완료 시 한 바퀴 도는 빛)
-    this.createSweepRing();
+    // Solar Corona 효과 (일식 금환고리)
+    this.createCorona();
 
     // 중앙 아이콘 배경 (원형)
     const iconBgGeometry = new CircleGeometry(innerRadius * 0.95, segments!);
@@ -372,76 +462,97 @@ export class UICircularGauge extends Group {
   }
 
   /**
-   * Sweep 링 생성 (빛이 도는 효과용)
+   * Solar Corona (일식 금환고리) 효과 생성
    */
-  private createSweepRing(): void {
-    const { innerRadius, outerRadius, segments } = this.config;
+  private createCorona(): void {
+    const { outerRadius, readyGlowColor } = this.config;
 
-    // 작은 호(arc) 형태의 sweep - 약 45도 정도의 trail
-    const sweepLength = Math.PI / 4; // 45도
-    const sweepGeometry = new RingGeometry(
-      innerRadius - 0.02,
-      outerRadius + 0.08,
-      Math.floor(segments! / 4),
-      1,
-      0,
-      sweepLength
-    );
+    // Corona 크기 (게이지보다 약간 크게)
+    const coronaSize = outerRadius * 3.5;
 
-    this.sweepMaterial = new MeshBasicMaterial({
-      color: this.config.readyGlowColor,
-      side: DoubleSide,
+    const coronaGeometry = new PlaneGeometry(coronaSize, coronaSize);
+
+    // 색상을 vec3로 변환
+    const color = new Color(readyGlowColor);
+
+    this.coronaMaterial = new ShaderMaterial({
+      vertexShader: coronaVertexShader,
+      fragmentShader: coronaFragmentShader,
+      uniforms: {
+        uTime: { value: 0 },
+        uProgress: { value: 0 },
+        uColor: { value: new Color(color.r * 1.5, color.g * 1.2, color.b) }, // 약간 밝게
+        uOpacity: { value: 1.0 },
+      },
       transparent: true,
-      opacity: 0,
+      blending: AdditiveBlending,
+      depthWrite: false,
+      side: DoubleSide,
     });
 
-    this.sweepRing = new Mesh(sweepGeometry, this.sweepMaterial);
-    this.sweepRing.position.z = 0.025;
-    this.sweepRing.rotation.z = Math.PI / 2; // 12시 방향에서 시작
-    this.add(this.sweepRing);
+    this.coronaMesh = new Mesh(coronaGeometry, this.coronaMaterial);
+    this.coronaMesh.position.z = -0.01; // 게이지 뒤에 배치
+    this.coronaMesh.visible = false;
+    this.add(this.coronaMesh);
   }
 
   /**
-   * Sweep 애니메이션 시작
+   * Corona 애니메이션 업데이트
    */
-  private startSweep(): void {
-    this.isSweeping = true;
-    this.sweepAngle = 0;
-    if (this.sweepMaterial) {
-      this.sweepMaterial.opacity = 1.0;
+  private updateCorona(deltaTime: number): void {
+    if (!this.coronaMesh || !this.coronaMaterial) return;
+
+    // 시간 업데이트
+    this.coronaTime += deltaTime;
+    this.coronaMaterial.uniforms.uTime.value = this.coronaTime;
+
+    // progress 애니메이션 (부드럽게 나타나고 사라짐)
+    if (this.coronaProgress !== this.coronaTargetProgress) {
+      const diff = this.coronaTargetProgress - this.coronaProgress;
+      const change = this.coronaAnimSpeed * deltaTime;
+
+      if (Math.abs(diff) < change) {
+        this.coronaProgress = this.coronaTargetProgress;
+      } else {
+        this.coronaProgress += Math.sign(diff) * change;
+      }
+
+      // easeOutBack 효과 (나타날 때 살짝 튀어나왔다 들어감)
+      let displayProgress = this.coronaProgress;
+      if (this.coronaTargetProgress > 0) {
+        // 나타날 때: easeOutBack
+        const t = this.coronaProgress;
+        const c1 = 1.70158;
+        const c3 = c1 + 1;
+        displayProgress = 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+      } else {
+        // 사라질 때: easeInBack
+        const t = this.coronaProgress;
+        const c1 = 1.70158;
+        const c3 = c1 + 1;
+        displayProgress = c3 * t * t * t - c1 * t * t;
+      }
+
+      this.coronaMaterial.uniforms.uProgress.value = Math.max(0, displayProgress);
+      this.coronaMesh.visible = this.coronaProgress > 0.01;
     }
   }
 
   /**
-   * Sweep 애니메이션 업데이트
+   * Corona 효과 표시
    */
-  private updateSweep(deltaTime: number): void {
-    if (!this.isSweeping || !this.sweepRing || !this.sweepMaterial) return;
-
-    // 각도 증가 (시계 방향 = 음의 방향)
-    this.sweepAngle += this.sweepSpeed * deltaTime;
-
-    // 회전 적용 (12시에서 시작, 시계방향)
-    this.sweepRing.rotation.z = Math.PI / 2 - this.sweepAngle;
-
-    // Trail 효과: sweep이 진행됨에 따라 opacity 변화
-    // 처음엔 밝고, 끝날 때 fade out
-    const progress = this.sweepAngle / (Math.PI * 2);
-
-    if (progress < 0.7) {
-      // 70%까지는 밝게 유지
-      this.sweepMaterial.opacity = 1.0;
-    } else {
-      // 나머지 30%에서 fade out
-      this.sweepMaterial.opacity = 1.0 - (progress - 0.7) / 0.3;
+  private showCorona(): void {
+    this.coronaTargetProgress = 1;
+    if (this.coronaMesh) {
+      this.coronaMesh.visible = true;
     }
+  }
 
-    // 한 바퀴 완료
-    if (this.sweepAngle >= Math.PI * 2) {
-      this.isSweeping = false;
-      this.sweepMaterial.opacity = 0;
-      this.sweepAngle = 0;
-    }
+  /**
+   * Corona 효과 숨기기
+   */
+  private hideCorona(): void {
+    this.coronaTargetProgress = 0;
   }
 
   /**
@@ -477,15 +588,14 @@ export class UICircularGauge extends Group {
    * 준비 완료 상태 설정
    */
   setReady(ready: boolean): void {
-    // ready 상태로 전환될 때 sweep 시작
-    if (ready && !this.isReady && !this.isSweeping) {
-      this.startSweep();
+    // ready 상태로 전환될 때 corona 표시
+    if (ready && !this.isReady) {
+      this.showCorona();
+    } else if (!ready && this.isReady) {
+      this.hideCorona();
     }
 
     this.isReady = ready;
-    if (!ready) {
-      this.glowMaterial.opacity = 0;
-    }
   }
 
   /**
@@ -562,25 +672,11 @@ export class UICircularGauge extends Group {
   }
 
   /**
-   * 업데이트 (글로우 애니메이션)
+   * 업데이트 (Corona 애니메이션)
    */
   update(deltaTime: number): void {
-    // Sweep 애니메이션 업데이트
-    this.updateSweep(deltaTime);
-
-    if (this.isReady) {
-      // 펄스 애니메이션
-      this.glowPulse += deltaTime * 4;
-      const pulseValue = (Math.sin(this.glowPulse) + 1) / 2; // 0~1
-      this.glowMaterial.opacity = 0.3 + pulseValue * 0.5;
-
-      // 아이콘 밝기 변화
-      if (this.iconBackgroundMaterial) {
-        this.iconBackgroundMaterial.color.setHex(
-          pulseValue > 0.5 ? 0x2a2a3e : 0x1a1a2e
-        );
-      }
-    }
+    // Corona 애니메이션 업데이트
+    this.updateCorona(deltaTime);
   }
 
   /**
@@ -701,15 +797,13 @@ export class UICircularGauge extends Group {
     this.backgroundMaterial.dispose();
     this.gaugeRing.geometry.dispose();
     this.gaugeMaterial.dispose();
-    this.glowRing.geometry.dispose();
-    this.glowMaterial.dispose();
     this.iconBackground.geometry.dispose();
     this.iconBackgroundMaterial.dispose();
 
-    // Sweep 링 정리
-    if (this.sweepRing) {
-      this.sweepRing.geometry.dispose();
-      this.sweepMaterial?.dispose();
+    // Corona 정리
+    if (this.coronaMesh) {
+      this.coronaMesh.geometry.dispose();
+      this.coronaMaterial?.dispose();
     }
 
     if (this.iconMesh) {
