@@ -18,6 +18,7 @@ Three.js UI library based on troika-three-text. A lightweight, pure Three.js UI 
 - **UIToggle**: Animated toggle switch
 - **UIScrollView**: Scrollable content container with stencil masking
 - **UIFloatingText**: Animated floating text (damage numbers, etc.)
+- **UICircularGauge**: Circular progress gauge with icon, borders, glow effects (skill cooldowns, etc.)
 
 ## Installation
 
@@ -373,6 +374,82 @@ healthBar.setOpacity(0.8);           // Set transparency
 - `setViewBounds(width, height)`: Set view bounds for auto-positioning
 - `show()`: Show tooltip
 - `hide()`: Hide tooltip
+
+### UICircularGauge
+
+Circular gauge UI component for skill cooldowns, ability charges, and other radial progress indicators.
+
+**Features:**
+- Circular progress ring with customizable colors
+- Center icon with background
+- Inner and outer border rings for depth
+- Ready state glow and pulse animation
+- Sweep animation when gauge completes
+- Key hint label (Q, E, etc.)
+- Tooltip support
+- Cooldown overlay effect
+
+```typescript
+import { UICircularGauge } from 'three-troika-ui';
+
+const skillGauge = new UICircularGauge({
+  size: 1.5,
+  innerRadius: 0.4,      // Icon area radius
+  outerRadius: 0.55,     // Gauge outer edge
+
+  // Colors
+  backgroundColor: 0x333333,
+  fillColor: 0x3498db,        // Progress color (blue)
+  readyGlowColor: 0x5dade2,   // Glow when ready
+
+  // Border styling (4-sided frame around filled gauge area)
+  borderColor: 0x5dade2, // Border color
+  borderThickness: 0.02, // Border thickness in world units
+
+  // Content
+  icon: '/assets/icons/skill.svg',
+  label: 'SKILL',
+
+  // Tooltip
+  tooltipTitle: 'Phantom Rush',
+  tooltipDescription: 'Increases movement speed by 80%\nDuration: 3s, Cooldown: 10s',
+});
+
+// Set key hint
+skillGauge.setKeyHint('Q');
+
+// Update progress (0-1)
+skillGauge.setProgress(0.75);
+
+// Set ready state (triggers glow and sweep animation)
+skillGauge.setReady(true);
+
+// Cooldown overlay (dims the icon)
+skillGauge.setCooldownOverlay(true);
+
+// Click handler
+skillGauge.setOnClick(() => activateSkill());
+
+// In game loop
+function update(deltaTime: number) {
+  skillGauge.update(deltaTime); // Required for animations
+}
+```
+
+- `setProgress(value)`: Set progress (0-1)
+- `setReady(ready)`: Set ready state (triggers glow animation)
+- `setFillColor(color)`: Change progress color
+- `setBorderColor(color)`: Change border color
+- `setKeyHint(key)`: Set key hint label
+- `setLabel(label)`: Set bottom label text
+- `setIcon(path)`: Change icon
+- `setCooldownOverlay(active)`: Toggle cooldown dim effect
+- `setOnClick(callback)`: Set click handler
+- `setHovered(hovered)`: Set hover state
+- `setOpacity(opacity)`: Set overall opacity (for fade effects)
+- `getTooltipInfo()`: Get tooltip title and description
+- `getHitRadius()`: Get outer radius for hit testing
+- `update(deltaTime)`: Update animations
 
 ### UIScrollView
 
