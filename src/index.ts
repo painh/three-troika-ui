@@ -9,6 +9,7 @@ export { UIImage, type UIImageConfig, clearTextureCache } from './UIImage';
 export { UI9Slice, type UI9SliceConfig } from './UI9Slice';
 export { UIProgressBar, type UIProgressBarConfig } from './UIProgressBar';
 export { UIShaderBar, type UIShaderBarConfig } from './UIShaderBar';
+export { UIHeartbeatBar, type UIHeartbeatBarConfig } from './UIHeartbeatBar';
 export { UIPanel, type UIPanelConfig, type LayoutDirection, type LayoutAlign, type LayoutJustify } from './UIPanel';
 export { UIFloatingText, type UIFloatingTextConfig } from './UIFloatingText';
 export { UITooltip, type UITooltipConfig, type TooltipLine } from './UITooltip';
