@@ -17,14 +17,17 @@ import {
 } from 'three';
 import { UIText } from './UIText';
 
-// Solar Corona 쉐이더 - 일식의 금환고리 효과
-const coronaVertexShader = `
+// 공용 버텍스 쉐이더
+const glowVertexShader = `
   varying vec2 vUv;
   void main() {
     vUv = uv;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
+
+// Solar Corona 쉐이더 - 일식의 금환고리 효과
+const coronaVertexShader = glowVertexShader;
 
 const coronaFragmentShader = `
   uniform float uTime;
@@ -126,6 +129,119 @@ const coronaFragmentShader = `
   }
 `;
 
+// Rising Flame 쉐이더 - 좌우에서 타오르며 위로 올라가는 불꽃
+const flameFragmentShader = `
+  uniform float uTime;
+  uniform float uProgress;
+  uniform vec3 uColor;
+  uniform float uOpacity;
+
+  varying vec2 vUv;
+
+  float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+  }
+
+  float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = hash(i);
+    float b = hash(i + vec2(1.0, 0.0));
+    float c = hash(i + vec2(0.0, 1.0));
+    float d = hash(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+  }
+
+  float fbm(vec2 p) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    for (int i = 0; i < 5; i++) {
+      value += amplitude * noise(p);
+      p *= 2.0;
+      amplitude *= 0.5;
+    }
+    return value;
+  }
+
+  void main() {
+    vec2 center = vec2(0.5, 0.5);
+    vec2 uv = vUv - center;
+
+    float dist = length(uv) * 2.0;
+    float angle = atan(uv.y, uv.x);
+
+    // 기본 반경 (게이지에 딱 붙게)
+    float baseInner = 0.72;
+    float baseOuter = 0.78;
+
+    // 좌우 방향 강조 (cos(angle)이 크면 좌우)
+    float sideStrength = abs(cos(angle));
+    // 위쪽 방향 (sin(angle) > 0)
+    float upStrength = max(0.0, sin(angle));
+
+    // 불꽃 높이 - 좌우에서 시작해서 위로 올라감
+    float flameHeight = sideStrength * 0.3 + upStrength * 0.15;
+
+    // 불꽃 노이즈 - 위로 흘러가는 느낌
+    float flameNoise1 = fbm(vec2(angle * 4.0, uTime * 4.0 - dist * 3.0)) * 0.2;
+    float flameNoise2 = fbm(vec2(angle * 6.0 - uTime * 0.5, uTime * 5.0 - dist * 4.0)) * 0.15;
+    float flameNoise3 = fbm(vec2(angle * 10.0 + uTime * 2.0, uTime * 3.5 - dist * 5.0)) * 0.1;
+
+    // 좌우에서 불꽃이 더 크게
+    float sideFlame = sideStrength * (flameNoise1 + flameNoise2) * 1.5;
+    // 위로 올라가는 불꽃
+    float risingFlame = upStrength * flameNoise3 * 2.0;
+
+    float totalFlame = flameHeight + sideFlame + risingFlame + flameNoise1 * 0.5;
+
+    // 내부/외부 반경
+    float innerRadius = baseInner * uProgress;
+    float outerRadius = (baseOuter + totalFlame) * uProgress;
+
+    // 링 마스크
+    float innerEdge = smoothstep(innerRadius - 0.03, innerRadius + 0.02, dist);
+    float outerEdge = 1.0 - smoothstep(outerRadius - 0.02, outerRadius + 0.08, dist);
+    float ringMask = innerEdge * outerEdge;
+
+    // 코어 밝기
+    float coreBrightness = 1.0 - smoothstep(innerRadius, outerRadius * 0.7, dist);
+    coreBrightness = pow(coreBrightness, 0.5) * 0.8 + 0.4;
+
+    // 불꽃 글로우
+    float flameGlow = smoothstep(baseOuter * 0.6 * uProgress, outerRadius, dist);
+    float glowIntensity = flameGlow * (0.6 + totalFlame * 2.5);
+
+    // 전체 강도
+    float intensity = ringMask * coreBrightness * 1.4 + glowIntensity * ringMask;
+
+    // 펄스
+    float pulse = sin(uTime * 5.0) * 0.08 + 0.95;
+    intensity *= pulse;
+
+    // 코어 글로우
+    float coreGlow = 1.0 - smoothstep(innerRadius * 0.85, innerRadius * 1.1, dist);
+    coreGlow = pow(coreGlow, 1.5) * 0.6;
+    intensity += coreGlow * ringMask;
+
+    vec3 finalColor = uColor * intensity;
+    float alpha = intensity * uOpacity * uProgress;
+
+    // 중앙은 밝은 노란색/흰색
+    vec3 brightCore = vec3(1.0, 0.95, 0.8);
+    finalColor = mix(finalColor, brightCore * intensity, coreGlow * 0.7);
+
+    // 외곽으로 갈수록 주황색 -> 빨간색
+    float heightFactor = (uv.y + 0.5); // 위로 갈수록 1
+    vec3 outerTint = mix(vec3(1.0, 0.4, 0.1), vec3(1.0, 0.7, 0.3), heightFactor);
+    finalColor = mix(finalColor, finalColor * outerTint, flameGlow * 0.6);
+
+    gl_FragColor = vec4(finalColor, alpha);
+  }
+`;
+
+export type GlowType = 'none' | 'corona' | 'flame';
+
 export interface UICircularGaugeConfig {
   size: number; // 전체 크기
   innerRadius: number; // 내부 원 반지름 (아이콘 영역)
@@ -142,6 +258,8 @@ export interface UICircularGaugeConfig {
   // 테두리 옵션 (4면 프레임 - 안쪽/바깥쪽 호 + 시작/끝 캡)
   borderColor?: number; // 테두리 색상
   borderThickness?: number; // 테두리 두께 (world units)
+  // 발광 효과 타입
+  glowType?: GlowType; // 'corona' (태양) 또는 'flame' (불꽃)
 }
 
 /**
@@ -164,6 +282,7 @@ export class UICircularGauge extends Group {
       | 'segments'
       | 'borderColor'
       | 'borderThickness'
+      | 'glowType'
     >
   > &
     UICircularGaugeConfig;
@@ -228,6 +347,7 @@ export class UICircularGauge extends Group {
       segments: 64,
       borderColor: 0x666666,
       borderThickness: 0.02,
+      glowType: 'corona',
       ...config,
     };
 
@@ -464,12 +584,15 @@ export class UICircularGauge extends Group {
   }
 
   /**
-   * Solar Corona (일식 금환고리) 효과 생성
+   * 발광 효과 생성 (glowType에 따라 corona 또는 flame)
    */
   private createCorona(): void {
-    const { outerRadius, readyGlowColor } = this.config;
+    const { outerRadius, readyGlowColor, glowType } = this.config;
 
-    // Corona 크기 (게이지보다 약간 크게)
+    // glowType이 'none'이면 생성하지 않음
+    if (glowType === 'none') return;
+
+    // 크기 (게이지보다 약간 크게)
     const coronaSize = outerRadius * 2.8;
 
     const coronaGeometry = new PlaneGeometry(coronaSize, coronaSize);
@@ -477,13 +600,17 @@ export class UICircularGauge extends Group {
     // 색상을 vec3로 변환
     const color = new Color(readyGlowColor);
 
+    // glowType에 따라 쉐이더 선택
+    const fragmentShader =
+      glowType === 'flame' ? flameFragmentShader : coronaFragmentShader;
+
     this.coronaMaterial = new ShaderMaterial({
-      vertexShader: coronaVertexShader,
-      fragmentShader: coronaFragmentShader,
+      vertexShader: glowVertexShader,
+      fragmentShader: fragmentShader,
       uniforms: {
         uTime: { value: 0 },
         uProgress: { value: 0 },
-        uColor: { value: new Color(color.r * 1.5, color.g * 1.2, color.b) }, // 약간 밝게
+        uColor: { value: new Color(color.r * 1.5, color.g * 1.2, color.b) },
         uOpacity: { value: 1.0 },
       },
       transparent: true,

@@ -542,8 +542,8 @@ export class UIHeartbeatBar extends UIElement {
         let color: [number, number, number];
         let intensity: number;
 
-        if (boundaryType === 'end') {
-          color = darkColor;
+        if (boundaryType === 'end' || boundaryType === 'start') {
+          color = boundaryType === 'end' ? darkColor : healthColor;
           intensity = waveType === 'main' ? 0.8 : 0.55;
         } else if (boundaryType === 'delay') {
           color = delayColor;
@@ -685,6 +685,24 @@ export class UIHeartbeatBar extends UIElement {
   setValues(health: number, stamina: number): this {
     this.setHealth(health);
     this.setStamina(stamina);
+    return this;
+  }
+
+  /**
+   * 체력 강제 설정 (애니메이션 없이 즉시 적용)
+   * 스테이지 전환 등에서 사용
+   */
+  forceHealth(value: number): this {
+    const newValue = Math.max(0, Math.min(1, value));
+    this.targetHealth = newValue;
+    this.lastHealthValue = newValue;
+    this.displayedHealth = newValue;
+    this.delayedHealth = newValue;
+    this.material.uniforms.uHealthValue.value = newValue;
+    this.material.uniforms.uRecoverableHealth.value = newValue;
+    this.healthDelayTimer = 0;
+    this.damageIntensity = 0;
+    this.material.uniforms.uDamageIntensity.value = 0;
     return this;
   }
 
