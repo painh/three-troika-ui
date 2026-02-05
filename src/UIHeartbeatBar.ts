@@ -402,16 +402,18 @@ export class UIHeartbeatBar extends UIElement {
   private globalTime: number = 0;
 
   // 체력 상태
-  private currentHealth: number = 1;
-  private displayedHealth: number = 1;
-  private recoverableHealth: number = 1;
-  private healthDelayTimer: number = 0;
+  private targetHealth: number = 1;       // 목표 체력 (실제 값)
+  private displayedHealth: number = 1;    // 화면에 표시되는 체력 (부드럽게 이동)
+  private delayedHealth: number = 1;      // 지연 게이지 (피격 시 잔상)
+  private healthDelayTimer: number = 0;   // 지연 대기 시간
+  private lastHealthValue: number = -1;   // 이전 체력 값 (증가/감소 판단용)
 
   // 스태미나 상태
-  private currentStamina: number = 1;
+  private targetStamina: number = 1;
   private displayedStamina: number = 1;
-  private recoverableStamina: number = 1;
+  private delayedStamina: number = 1;
   private staminaDelayTimer: number = 0;
+  private lastStaminaValue: number = -1;
 
   // 피격 상태
   private damageIntensity: number = 0;
@@ -423,9 +425,11 @@ export class UIHeartbeatBar extends UIElement {
   private maxShield: number = 0;
 
   // 설정
-  private healthDelaySpeed: number;
+  private healthDelaySpeed: number;       // 지연 게이지 따라오는 속도
+  private healthFillSpeed: number;        // 체력 증가 시 부드러운 증가 속도
   private staminaDelaySpeed: number;
-  private delayWait: number = 0.5;
+  private staminaFillSpeed: number;
+  private delayWait: number = 0.3;        // 피격 후 대기 시간
 
   constructor(config: UIHeartbeatBarConfig = {}) {
     super();
@@ -433,8 +437,10 @@ export class UIHeartbeatBar extends UIElement {
     this._width = config.width ?? 4;
     this._height = config.height ?? 0.5;
 
-    this.healthDelaySpeed = config.healthDelaySpeed ?? 0.8;
+    this.healthDelaySpeed = config.healthDelaySpeed ?? 1.0;   // 지연 게이지 속도
+    this.healthFillSpeed = 2.0;                               // 체력 증가 시 애니메이션 속도
     this.staminaDelaySpeed = config.staminaDelaySpeed ?? 1.2;
+    this.staminaFillSpeed = 2.5;
 
     const toVec3 = (color: number): [number, number, number] => [
       ((color >> 16) & 0xff) / 255,
@@ -484,7 +490,7 @@ export class UIHeartbeatBar extends UIElement {
     const flareColor = toVec3(config.healthColor ?? 0x3fb950);  // 녹색
     const darkFlareColor: [number, number, number] = [0.15, 0.15, 0.18];  // 어두운 색 (max 표시용)
 
-    const flareSize = this._height * 2.5;
+    const flareSize = this._height * 3.75;  // 2.5 * 1.5 = 1.5배 키움
     const flareGeometry = new PlaneGeometry(flareSize, flareSize);
 
     // 왼쪽 플레어 생성 (녹색 - 시작점)
@@ -551,13 +557,13 @@ export class UIHeartbeatBar extends UIElement {
     this.add(this.rightFlare);
 
     // 초기값
-    this.currentHealth = config.healthValue ?? 1;
-    this.displayedHealth = this.currentHealth;
-    this.recoverableHealth = this.currentHealth;
+    this.targetHealth = config.healthValue ?? 1;
+    this.displayedHealth = this.targetHealth;
+    this.delayedHealth = this.targetHealth;
 
-    this.currentStamina = config.staminaValue ?? 1;
-    this.displayedStamina = this.currentStamina;
-    this.recoverableStamina = this.currentStamina;
+    this.targetStamina = config.staminaValue ?? 1;
+    this.displayedStamina = this.targetStamina;
+    this.delayedStamina = this.targetStamina;
   }
 
   /**
@@ -565,25 +571,37 @@ export class UIHeartbeatBar extends UIElement {
    */
   setHealth(value: number): this {
     const newValue = Math.max(0, Math.min(1, value));
+    this.targetHealth = newValue;
 
-    if (newValue < this.currentHealth) {
-      // 피해 입음 - 회복 가능 체력은 이전 값 유지
-      this.recoverableHealth = this.displayedHealth;
-      this.healthDelayTimer = this.delayWait;
-
-      // 피격 강도 설정 (피해량에 비례, 최소 0.7 보장하여 확실한 빨간색)
-      const damageAmount = this.currentHealth - newValue;
-      this.damageIntensity = Math.min(1, Math.max(0.7, damageAmount * 5 + 0.7));
-      this.material.uniforms.uDamageIntensity.value = this.damageIntensity;
-      console.log('[UIHeartbeatBar] DAMAGE! damageIntensity:', this.damageIntensity, 'amount:', damageAmount);
-    } else if (newValue > this.currentHealth) {
-      // 회복됨 - 바로 반영
-      this.recoverableHealth = newValue;
+    // 첫 설정 시 초기화
+    if (this.lastHealthValue < 0) {
+      this.lastHealthValue = newValue;
+      this.displayedHealth = newValue;
+      this.delayedHealth = newValue;
+      this.material.uniforms.uHealthValue.value = newValue;
+      return this;
     }
 
-    this.currentHealth = newValue;
-    this.material.uniforms.uHealthValue.value = newValue;
+    const diff = newValue - this.lastHealthValue;
 
+    if (diff < 0) {
+      // 피해 입음 - 표시 체력 즉시 감소, 지연 게이지는 대기 후 따라감
+      this.displayedHealth = newValue;
+      this.material.uniforms.uHealthValue.value = newValue;
+      this.healthDelayTimer = this.delayWait;
+
+      // 피격 강도 설정 (피해량에 비례, 최소 0.7 보장)
+      const damageAmount = this.lastHealthValue - newValue;
+      this.damageIntensity = Math.min(1, Math.max(0.7, damageAmount * 5 + 0.7));
+      this.material.uniforms.uDamageIntensity.value = this.damageIntensity;
+    } else if (diff > 0) {
+      // 회복됨 - displayedHealth는 update()에서 부드럽게 증가
+      // delayedHealth도 함께 증가 (지연 없이)
+      this.healthDelayTimer = 0;
+      this.delayedHealth = newValue;
+    }
+
+    this.lastHealthValue = newValue;
     return this;
   }
 
@@ -592,17 +610,31 @@ export class UIHeartbeatBar extends UIElement {
    */
   setStamina(value: number): this {
     const newValue = Math.max(0, Math.min(1, value));
+    this.targetStamina = newValue;
 
-    if (newValue < this.currentStamina) {
-      this.recoverableStamina = this.displayedStamina;
-      this.staminaDelayTimer = this.delayWait;
-    } else if (newValue > this.currentStamina) {
-      this.recoverableStamina = newValue;
+    // 첫 설정 시 초기화
+    if (this.lastStaminaValue < 0) {
+      this.lastStaminaValue = newValue;
+      this.displayedStamina = newValue;
+      this.delayedStamina = newValue;
+      this.material.uniforms.uStaminaValue.value = newValue;
+      return this;
     }
 
-    this.currentStamina = newValue;
-    this.material.uniforms.uStaminaValue.value = newValue;
+    const diff = newValue - this.lastStaminaValue;
 
+    if (diff < 0) {
+      // 스태미나 감소 - 즉시 감소, 지연 게이지는 대기 후 따라감
+      this.displayedStamina = newValue;
+      this.material.uniforms.uStaminaValue.value = newValue;
+      this.staminaDelayTimer = this.delayWait;
+    } else if (diff > 0) {
+      // 스태미나 회복 - 부드럽게 증가
+      this.staminaDelayTimer = 0;
+      this.delayedStamina = newValue;
+    }
+
+    this.lastStaminaValue = newValue;
     return this;
   }
 
@@ -691,13 +723,6 @@ export class UIHeartbeatBar extends UIElement {
     // 플레어 애니메이션 업데이트
     this.updateFlares();
 
-    // 현재 체력 플레어 위치 조정 (녹색 파형의 끝점)
-    const currentHealthX = -this._width / 2 + this._width * this.currentHealth;
-    this.currentFlare.position.x = currentHealthX;
-
-    // 오른쪽 플레어는 항상 오른쪽 끝 (max)에 고정
-    // this.rightFlare.position.x = this._width / 2; // 이미 고정됨
-
     // 피격 강도 감소 (서서히 녹색으로 복귀)
     if (this.damageIntensity > 0) {
       this.damageIntensity = Math.max(0, this.damageIntensity - this.damageDecaySpeed * deltaTime);
@@ -710,33 +735,62 @@ export class UIHeartbeatBar extends UIElement {
       this.material.uniforms.uShieldDamageIntensity.value = this.shieldDamageIntensity;
     }
 
-    // 체력 회복 가능 게이지 애니메이션
+    // === 체력 애니메이션 ===
+    // 1. 체력 증가 시: displayedHealth가 targetHealth로 부드럽게 증가
+    if (this.displayedHealth < this.targetHealth) {
+      this.displayedHealth = Math.min(
+        this.targetHealth,
+        this.displayedHealth + this.healthFillSpeed * deltaTime
+      );
+      this.material.uniforms.uHealthValue.value = this.displayedHealth;
+    }
+
+    // 2. 지연 게이지 애니메이션 (피격 후 잔상이 따라옴)
     if (this.healthDelayTimer > 0) {
       this.healthDelayTimer -= deltaTime;
     } else {
-      if (this.recoverableHealth > this.currentHealth) {
-        this.recoverableHealth = Math.max(
-          this.currentHealth,
-          this.recoverableHealth - this.healthDelaySpeed * deltaTime
+      // 지연 게이지가 현재 표시 체력보다 높으면 따라감
+      if (this.delayedHealth > this.displayedHealth) {
+        this.delayedHealth = Math.max(
+          this.displayedHealth,
+          this.delayedHealth - this.healthDelaySpeed * deltaTime
         );
       }
+      // 지연 게이지가 현재 표시 체력보다 낮으면 (회복 시) 즉시 따라감
+      else if (this.delayedHealth < this.displayedHealth) {
+        this.delayedHealth = this.displayedHealth;
+      }
     }
-    this.material.uniforms.uRecoverableHealth.value = this.recoverableHealth;
-    this.displayedHealth = this.currentHealth;
+    this.material.uniforms.uRecoverableHealth.value = this.delayedHealth;
 
-    // 스태미나 회복 가능 게이지 애니메이션
+    // 현재 체력 플레어 위치 조정 (표시되는 체력 기준)
+    const currentHealthX = -this._width / 2 + this._width * this.displayedHealth;
+    this.currentFlare.position.x = currentHealthX;
+
+    // === 스태미나 애니메이션 ===
+    // 1. 스태미나 증가 시: displayedStamina가 targetStamina로 부드럽게 증가
+    if (this.displayedStamina < this.targetStamina) {
+      this.displayedStamina = Math.min(
+        this.targetStamina,
+        this.displayedStamina + this.staminaFillSpeed * deltaTime
+      );
+      this.material.uniforms.uStaminaValue.value = this.displayedStamina;
+    }
+
+    // 2. 지연 게이지 애니메이션
     if (this.staminaDelayTimer > 0) {
       this.staminaDelayTimer -= deltaTime;
     } else {
-      if (this.recoverableStamina > this.currentStamina) {
-        this.recoverableStamina = Math.max(
-          this.currentStamina,
-          this.recoverableStamina - this.staminaDelaySpeed * deltaTime
+      if (this.delayedStamina > this.displayedStamina) {
+        this.delayedStamina = Math.max(
+          this.displayedStamina,
+          this.delayedStamina - this.staminaDelaySpeed * deltaTime
         );
+      } else if (this.delayedStamina < this.displayedStamina) {
+        this.delayedStamina = this.displayedStamina;
       }
     }
-    this.material.uniforms.uRecoverableStamina.value = this.recoverableStamina;
-    this.displayedStamina = this.currentStamina;
+    this.material.uniforms.uRecoverableStamina.value = this.delayedStamina;
   }
 
   /**
@@ -805,15 +859,17 @@ export class UIHeartbeatBar extends UIElement {
    * 상태 리셋
    */
   reset(): this {
-    this.currentHealth = 1;
+    this.targetHealth = 1;
     this.displayedHealth = 1;
-    this.recoverableHealth = 1;
+    this.delayedHealth = 1;
     this.healthDelayTimer = 0;
+    this.lastHealthValue = -1;
 
-    this.currentStamina = 1;
+    this.targetStamina = 1;
     this.displayedStamina = 1;
-    this.recoverableStamina = 1;
+    this.delayedStamina = 1;
     this.staminaDelayTimer = 0;
+    this.lastStaminaValue = -1;
 
     this.damageIntensity = 0;
     this.shieldDamageIntensity = 0;
@@ -841,11 +897,11 @@ export class UIHeartbeatBar extends UIElement {
 
     // 플레어 위치 업데이트
     this.leftFlare.position.x = -width / 2;
-    this.currentFlare.position.x = -width / 2 + width * this.currentHealth;
+    this.currentFlare.position.x = -width / 2 + width * this.displayedHealth;
     this.rightFlare.position.x = width / 2;
 
     // 플레어 크기 업데이트
-    const flareSize = height * 2.5;
+    const flareSize = height * 3.75;  // 2.5 * 1.5 = 1.5배 키움
     this.leftFlare.geometry.dispose();
     this.currentFlare.geometry.dispose();
     this.rightFlare.geometry.dispose();
@@ -860,11 +916,22 @@ export class UIHeartbeatBar extends UIElement {
    * 현재 값 가져오기
    */
   getHealth(): number {
-    return this.currentHealth;
+    return this.targetHealth;
   }
 
   getStamina(): number {
-    return this.currentStamina;
+    return this.targetStamina;
+  }
+
+  /**
+   * 표시 중인 값 가져오기 (애니메이션 중간 값)
+   */
+  getDisplayedHealth(): number {
+    return this.displayedHealth;
+  }
+
+  getDisplayedStamina(): number {
+    return this.displayedStamina;
   }
 
   dispose(): void {
