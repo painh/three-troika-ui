@@ -250,6 +250,11 @@ const heartbeatBarFragmentShader = `
 
   void main() {
     vec2 uv = vUv;
+
+    // UV.y 리매핑: geometry가 2배 높이이므로 UV 0~1을 -0.25~1.25로 확장
+    // 이렇게 하면 파형이 원래 0~1 범위 밖으로 그려져도 잘리지 않음
+    uv.y = uv.y * 1.5 - 0.25;
+
     vec3 finalColor = vec3(0.0);
     float alpha = 0.0;
 
