@@ -9,6 +9,7 @@ Three.js UI library based on troika-three-text. A lightweight, pure Three.js UI 
 - **UIBox**: Background boxes with rounded corners and borders
 - **UIImage**: Image/icon display with texture caching
 - **UIProgressBar**: Progress bar with customizable colors
+- **UIShaderBar**: Advanced shader-based health bar with delayed gauge, shield, dissolve effects
 - **UIPanel**: Layout container with flexbox-like positioning
 - **UITooltip**: Multi-line tooltip with auto-positioning
 - **UIButton**: Interactive button with hover/press states
@@ -241,6 +242,79 @@ All UI components extend this base class.
 - `getValue()`: Get current value
 - `setFillColor(color)`: Set fill color
 - `setBackgroundColor(color)`: Set background color
+
+### UIShaderBar
+
+Advanced shader-based progress bar with delayed gauge animations, shield system, and visual effects. Perfect for boss health bars, stamina bars, or any gauge that needs smooth delayed decrease/increase animations.
+
+**Features:**
+- Delayed decrease animation (yellow "damage trail" effect)
+- Shield gauge with delayed fill animation
+- Noise edge effects
+- Low health pulse effect
+- Shine/gloss effect
+- Dissolve death effect
+
+```typescript
+import { UIShaderBar } from 'three-troika-ui';
+
+const healthBar = new UIShaderBar({
+  width: 4,
+  height: 0.3,
+  value: 1,           // Initial health (0-1)
+  shieldValue: 0,     // Initial shield
+
+  // Colors (Dark Souls style)
+  backgroundColor: 0x1a1a1e,
+  fillColor: 0xb31a1a,        // Main health color (red)
+  delayColor: 0xe6b319,       // Delayed gauge color (yellow)
+  shieldColor: 0x1a80e6,      // Shield color (blue)
+  shieldDelayColor: 0x99ccff, // Shield delay color
+  lowHealthColor: 0x660d0d,   // Color when health is low
+  dissolveEdgeColor: 0xff4d1a,
+
+  // Behavior
+  lowHealthThreshold: 0.3,    // Pulse effect below this
+  delayWait: 0.3,             // Delay before trail starts
+  delaySpeed: 1.0,            // Trail speed (1.0 = 1 second for full bar)
+  shieldFillSpeed: 0.3,       // Shield fill speed
+
+  // Effects toggle
+  enableNoise: true,          // Noisy edge effect
+  enablePulse: true,          // Low health pulse
+  enableShine: true,          // Gloss effect
+  enableDissolve: true,       // Dissolve capability
+});
+
+// In game loop
+function update(deltaTime: number) {
+  healthBar.update(deltaTime); // Required for animations
+}
+
+// Set health (0-1)
+healthBar.setValue(0.5);
+
+// Set shield (current value, max value)
+// When max changes, shield fills from 0 with animation
+healthBar.setShield(100, 200);
+
+// Start dissolve effect (for death)
+healthBar.startDissolve(1.5); // speed parameter
+
+// Reset all state
+healthBar.reset();
+
+// Color customization
+healthBar.setFillColor(0x00ff00);    // Change to green
+healthBar.setShieldColor(0xff00ff);  // Change shield to purple
+healthBar.setOpacity(0.8);           // Set transparency
+```
+
+**Shield Behavior:**
+- When `max` parameter changes in `setShield()`, it's treated as a new shield phase
+- Shield gauge fills from 0 with smooth animation
+- During shield fill, damage shows delayed decrease from current displayed value
+- Shield decrease shows delayed trail effect
 
 ### UIPanel
 
