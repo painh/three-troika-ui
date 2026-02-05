@@ -70,43 +70,45 @@ const coronaFragmentShader = `
     float dist = length(uv) * 2.0;
     float angle = atan(uv.y, uv.x);
 
-    // 기본 반경 (더 작게)
-    float baseInner = 0.65;
-    float baseOuter = 0.88;
+    // 기본 반경 (게이지에 딱 붙게)
+    float baseInner = 0.72;
+    float baseOuter = 0.5;
 
-    // 외곽 일렁임 - 각도에 따라 불규칙하게 타오름
-    float flameNoise1 = fbm(vec2(angle * 2.0 + uTime * 1.2, uTime * 0.8)) * 0.12;
-    float flameNoise2 = fbm(vec2(angle * 3.5 - uTime * 0.9, uTime * 1.1)) * 0.08;
-    float flameNoise3 = fbm(vec2(angle * 5.0 + uTime * 1.5, uTime * 0.6)) * 0.06;
-    float totalFlame = flameNoise1 + flameNoise2 + flameNoise3;
+    // 외곽 일렁임 - 더 빠르고 과격하게!
+    float flameNoise1 = fbm(vec2(angle * 3.0 + uTime * 3.5, uTime * 2.0)) * 0.18;
+    float flameNoise2 = fbm(vec2(angle * 5.0 - uTime * 2.8, uTime * 3.2)) * 0.14;
+    float flameNoise3 = fbm(vec2(angle * 8.0 + uTime * 4.0, uTime * 1.8)) * 0.10;
+    // 급격한 스파이크 추가
+    float spike = pow(fbm(vec2(angle * 12.0 + uTime * 5.0, uTime * 2.5)), 2.0) * 0.15;
+    float totalFlame = flameNoise1 + flameNoise2 + flameNoise3 + spike;
 
     // 내부/외부 반경 (progress에 따라 스케일 + 일렁임)
     float innerRadius = baseInner * uProgress;
     float outerRadius = (baseOuter + totalFlame) * uProgress;
 
     // 부드러운 링 마스크
-    float innerEdge = smoothstep(innerRadius - 0.06, innerRadius + 0.03, dist);
-    float outerEdge = 1.0 - smoothstep(outerRadius - 0.03, outerRadius + 0.08, dist);
+    float innerEdge = smoothstep(innerRadius - 0.04, innerRadius + 0.02, dist);
+    float outerEdge = 1.0 - smoothstep(outerRadius - 0.02, outerRadius + 0.06, dist);
     float ringMask = innerEdge * outerEdge;
 
     // 중심부 밝기 (안쪽이 훨씬 더 밝음 - 빛 뿜어지는 느낌)
-    float coreBrightness = 1.0 - smoothstep(innerRadius, outerRadius * 0.75, dist);
-    coreBrightness = pow(coreBrightness, 0.5) * 0.8 + 0.6; // 더 밝게
+    float coreBrightness = 1.0 - smoothstep(innerRadius, outerRadius * 0.8, dist);
+    coreBrightness = pow(coreBrightness, 0.4) * 0.9 + 0.5;
 
     // 외곽 글로우 (타오르는 느낌)
-    float outerGlow = smoothstep(baseOuter * 0.7 * uProgress, outerRadius, dist);
-    float glowIntensity = outerGlow * (0.4 + totalFlame * 2.5);
+    float outerGlow = smoothstep(baseOuter * 0.75 * uProgress, outerRadius, dist);
+    float glowIntensity = outerGlow * (0.5 + totalFlame * 3.0);
 
     // 전체 강도 (더 밝게)
-    float intensity = ringMask * coreBrightness * 1.5 + glowIntensity * ringMask;
+    float intensity = ringMask * coreBrightness * 1.6 + glowIntensity * ringMask;
 
-    // 미세한 펄스 (숨쉬는 느낌)
-    float pulse = sin(uTime * 2.5) * 0.08 + 0.95;
+    // 미세한 펄스 (숨쉬는 느낌) - 더 빠르게
+    float pulse = sin(uTime * 4.0) * 0.1 + 0.95;
     intensity *= pulse;
 
     // 중앙 코어 추가 밝기 (빛 뿜어지는 핵심부)
-    float coreGlow = 1.0 - smoothstep(innerRadius * 0.8, innerRadius * 1.1, dist);
-    coreGlow = pow(coreGlow, 2.0) * 0.6;
+    float coreGlow = 1.0 - smoothstep(innerRadius * 0.85, innerRadius * 1.05, dist);
+    coreGlow = pow(coreGlow, 1.5) * 0.7;
     intensity += coreGlow * ringMask;
 
     vec3 finalColor = uColor * intensity;
@@ -114,11 +116,11 @@ const coronaFragmentShader = `
 
     // 중앙부는 더 밝은 흰색으로
     vec3 brightCore = vec3(1.0, 1.0, 0.95);
-    finalColor = mix(finalColor, brightCore * intensity, coreGlow * 0.5);
+    finalColor = mix(finalColor, brightCore * intensity, coreGlow * 0.6);
 
     // 외곽으로 갈수록 색상 변화 (약간 주황빛)
     vec3 outerTint = vec3(1.0, 0.85, 0.6);
-    finalColor = mix(finalColor, finalColor * outerTint, outerGlow * 0.4);
+    finalColor = mix(finalColor, finalColor * outerTint, outerGlow * 0.5);
 
     gl_FragColor = vec4(finalColor, alpha);
   }
@@ -468,7 +470,7 @@ export class UICircularGauge extends Group {
     const { outerRadius, readyGlowColor } = this.config;
 
     // Corona 크기 (게이지보다 약간 크게)
-    const coronaSize = outerRadius * 3.5;
+    const coronaSize = outerRadius * 2.8;
 
     const coronaGeometry = new PlaneGeometry(coronaSize, coronaSize);
 
