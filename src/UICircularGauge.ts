@@ -171,9 +171,9 @@ const flameFragmentShader = `
     float dist = length(uv) * 2.0;
     float angle = atan(uv.y, uv.x);
 
-    // 기본 반경 (게이지에 딱 붙게)
+    // 기본 반경 (게이지에 딱 붙게 - corona와 동일)
     float baseInner = 0.72;
-    float baseOuter = 0.78;
+    float baseOuter = 0.5;
 
     // 좌우 방향 강조 (cos(angle)이 크면 좌우)
     float sideStrength = abs(cos(angle));
