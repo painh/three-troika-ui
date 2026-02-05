@@ -5,16 +5,13 @@
  * - 심전도 파형이 흐르는 체력바
  * - 체력에 따라 파형 강도/속도 변화
  * - 회복 가능 체력 표시 (Recoverable Health)
- * - 스태미나 바 (하단)
+ * - 경계면 × 파형 교차점에 플레어 효과
  */
 
 import { PlaneGeometry, Mesh, ShaderMaterial, IUniform, AdditiveBlending, DoubleSide } from 'three';
 import { UIElement } from './UIElement';
 
-/**
- * 수직 플레어 쉐이더 (체력바 양쪽 끝 데코레이션)
- * AnamorphicFlareShader를 90도 회전 + 펄싱 효과 추가
- */
+// 수직 플레어 쉐이더 (경계면 × 파형 교차점 표시용)
 const verticalFlareVertexShader = `
   varying vec2 vUv;
   void main() {
@@ -29,13 +26,10 @@ const verticalFlareFragmentShader = `
   uniform float uTime;
   uniform float uIntensity;
   uniform vec3 uColor;
-  uniform float uStreakLength;
-  uniform float uCoreSize;
-  uniform float uPulse; // 펄싱 값 (0~1)
+  uniform float uPulse;
 
   varying vec2 vUv;
 
-  // 노이즈 함수
   float hash(float n) {
     return fract(sin(n) * 43758.5453123);
   }
@@ -49,66 +43,50 @@ const verticalFlareFragmentShader = `
   void main() {
     vec2 uv = vUv - 0.5;
 
-    // 90도 회전 (x, y 교체) - 수직 스트릭으로 변경
+    // 수직 스트릭으로 변경 (x, y 교체)
     vec2 rotatedUv = vec2(uv.y, uv.x);
 
-    // === 1. 중심 코어 (불규칙한 광원) ===
+    // 중심 코어
     float coreDist = length(rotatedUv);
-
-    // 코어에 불규칙함 추가
     float angle = atan(rotatedUv.y, rotatedUv.x);
     float coreNoise = noise(angle * 3.0 + uTime * 30.0) * 0.3 + 0.85;
     float distortedDist = coreDist * coreNoise;
 
-    float coreScale = 8.0 / uCoreSize;
+    float coreScale = 10.0;
     float core = exp(-distortedDist * coreScale) * uIntensity;
 
-    // 코어 내부 밝은 부분 (펄싱)
     float innerNoise = noise(uTime * 50.0) * 0.2 + 0.9;
     float innerCore = exp(-distortedDist * coreScale * 3.0) * uIntensity * 0.5 * innerNoise;
 
-    // === 2. 수직 스트릭 (아나모픽 효과를 90도 회전) ===
-    float streakFalloffX = 2.0 / uStreakLength;
-    float streakFalloffY = 40.0;
+    // 수직 스트릭
+    float streakFalloffX = 2.5;
+    float streakFalloffY = 50.0;
 
-    // 스트릭 기본 형태 (rotatedUv.x가 이제 수직 방향)
     float streakX = exp(-abs(rotatedUv.x) * streakFalloffX);
-
-    // 끝을 뾰족하게
     float taper = 1.0 - smoothstep(0.0, 0.45, abs(rotatedUv.x));
     float taperY = exp(-abs(rotatedUv.y) * streakFalloffY / max(0.1, taper * taper + 0.1));
 
-    // 끝부분 깜빡임
     float distFromCenter = abs(rotatedUv.x) / 0.5;
     float flickerAmount = distFromCenter * distFromCenter;
     float flicker = 1.0 - flickerAmount * 0.5 * noise(uTime * 60.0 + rotatedUv.x * 20.0);
 
-    // 펄싱 효과 적용
     float pulseEffect = 0.8 + uPulse * 0.4;
-
     float streak = streakX * taperY * uIntensity * 0.8 * flicker * pulseEffect;
 
-    // === 3. 보조 스트릭 (더 넓고 약한 글로우) ===
+    // 보조 스트릭
     float wideStreakX = exp(-abs(rotatedUv.x) * streakFalloffX * 0.5);
     float wideTaper = 1.0 - smoothstep(0.0, 0.5, abs(rotatedUv.x));
     float wideStreakY = exp(-abs(rotatedUv.y) * streakFalloffY * 0.7 / max(0.1, wideTaper + 0.1));
-
     float wideFlicker = 1.0 - flickerAmount * 0.3 * noise(uTime * 45.0 + rotatedUv.x * 15.0 + 100.0);
     float wideStreak = wideStreakX * wideStreakY * uIntensity * 0.3 * wideFlicker * pulseEffect;
 
-    // === 4. 합성 ===
     float glow = core + innerCore + streak + wideStreak;
-
-    // 밝기 클램핑
     glow = min(glow, 2.0);
 
-    // 색상 적용
     vec3 finalColor = mix(uColor, vec3(1.0), glow * 0.5);
     finalColor *= glow;
 
-    float alpha = glow;
-
-    gl_FragColor = vec4(finalColor, alpha);
+    gl_FragColor = vec4(finalColor, glow);
   }
 `;
 
@@ -141,6 +119,7 @@ const heartbeatBarFragmentShader = `
   uniform vec3 uWaveColor;
   uniform vec3 uWaveGlowColor;
   uniform vec3 uShieldColor;          // 쉴드 피격 시 파란색
+  uniform vec3 uDelayColor;           // 지연 영역 색상 (노란색)
 
   uniform float uLowHealthThreshold;
   uniform float uWaveSpeed;
@@ -258,83 +237,72 @@ const heartbeatBarFragmentShader = `
     vec3 finalColor = vec3(0.0);
     float alpha = 0.0;
 
+    // 총 피격 강도 (체력 + 쉴드)
+    float totalDamageIntensity = max(uDamageIntensity, uShieldDamageIntensity);
+
+    // 파형 색상 계산 (체력바 영역용)
+    vec3 healthWaveColor = uHealthColor;
+    if (uShieldDamageIntensity > 0.01) {
+      healthWaveColor = mix(uHealthColor, uShieldColor, uShieldDamageIntensity);
+    } else if (uDamageIntensity > 0.01) {
+      healthWaveColor = mix(uHealthColor, uLowHealthColor, uDamageIntensity);
+    }
+    if (uHealthValue < uLowHealthThreshold) {
+      float t = uHealthValue / uLowHealthThreshold;
+      healthWaveColor = mix(uLowHealthColor, healthWaveColor, t);
+    }
+
+    // 지연 영역 색상
+    vec3 delayWaveColor = uDelayColor;
+    float damageBlend = max(uDamageIntensity, uShieldDamageIntensity);
+    delayWaveColor = mix(delayWaveColor, vec3(0.95, 0.3, 0.2), damageBlend * 0.5);
+
+    // 어두운 영역 색상
+    vec3 darkColor = vec3(0.15, 0.15, 0.18);
+
     // 체력 범위 내에서만 파형 그리기
     if (uv.x <= uHealthValue) {
       // 현재 체력 범위(0~uHealthValue)에서 0~1로 정규화
       float normalizedX = uv.x / max(uHealthValue, 0.01);
-
-      // 총 피격 강도 (체력 + 쉴드)
-      float totalDamageIntensity = max(uDamageIntensity, uShieldDamageIntensity);
-
-      // 파형 색상 계산
-      vec3 baseColor = uHealthColor;
-      vec3 waveColor = baseColor;
-
-      // 쉴드 피격 시 파란색 (우선), 체력 피격 시 빨간색
-      if (uShieldDamageIntensity > 0.01) {
-        waveColor = mix(baseColor, uShieldColor, uShieldDamageIntensity);
-      } else if (uDamageIntensity > 0.01) {
-        waveColor = mix(baseColor, uLowHealthColor, uDamageIntensity);
-      }
-
-      // 체력 낮을 때도 빨간색으로
-      if (uHealthValue < uLowHealthThreshold) {
-        float t = uHealthValue / uLowHealthThreshold;
-        waveColor = mix(uLowHealthColor, waveColor, t);
-      }
 
       // === 메인 파형 (굵고 밝음, 굵기 불규칙) ===
       float mainWaveY = mhWildsWave(uv.x, uTime, uHealthValue, totalDamageIntensity, 0.0);
       float mainDist = abs(uv.y - mainWaveY);
       float thicknessMult = getWaveThickness(uv.x, uTime);
       float mainLineWidth = 0.12 * thicknessMult;
-      drawWaveLine(mainWaveY, mainDist, waveColor, mainLineWidth, 1.5 * thicknessMult, finalColor, alpha);
+      drawWaveLine(mainWaveY, mainDist, healthWaveColor, mainLineWidth, 1.5 * thicknessMult, finalColor, alpha);
 
       // === 서브 파형 1 (위쪽, 양끝에서 메인과 합류) ===
       float sub1Spread = sin(normalizedX * 3.14159); // 0→1→0 (중간에서 최대)
-      // 피격 강도 동일하게 적용 (totalDamageIntensity)
       float sub1BaseY = mhWildsWave(uv.x + 0.1, uTime * 1.1, uHealthValue, totalDamageIntensity, 0.0);
-      // 서브 파형 벌어짐 더 크게 (0.22 -> 0.32) - 위아래 요동 강화
       float sub1OffsetY = sub1Spread * 0.32;
       float sub1WaveY = sub1BaseY + sub1OffsetY;
       float sub1Dist = abs(uv.y - sub1WaveY);
-      vec3 sub1Color = waveColor * 0.7;
-      // 굵기 2배 + 불규칙 굵기 적용 (0.02 -> 0.04 * thickness)
+      vec3 sub1Color = healthWaveColor * 0.7;
       float sub1Thickness = getWaveThickness(uv.x + 0.1, uTime * 1.1);
       drawWaveLine(sub1WaveY, sub1Dist, sub1Color, 0.04 * sub1Thickness, 0.8 * sub1Thickness, finalColor, alpha);
 
       // === 서브 파형 2 (아래쪽, 양끝에서 메인과 합류) ===
       float sub2Spread = sin(normalizedX * 3.14159); // 0→1→0 (중간에서 최대)
-      // 피격 강도 동일하게 적용 (totalDamageIntensity)
       float sub2BaseY = mhWildsWave(uv.x - 0.15, uTime * 0.9, uHealthValue, totalDamageIntensity, 0.0);
-      // 서브 파형 벌어짐 더 크게 (0.18 -> 0.28) - 위아래 요동 강화
       float sub2OffsetY = -sub2Spread * 0.28;
       float sub2WaveY = sub2BaseY + sub2OffsetY;
       float sub2Dist = abs(uv.y - sub2WaveY);
-      vec3 sub2Color = waveColor * 0.6;
-      // 굵기 2배 + 불규칙 굵기 적용 (0.012 -> 0.024 * thickness)
+      vec3 sub2Color = healthWaveColor * 0.6;
       float sub2Thickness = getWaveThickness(uv.x - 0.15, uTime * 0.9);
       drawWaveLine(sub2WaveY, sub2Dist, sub2Color, 0.024 * sub2Thickness, 0.6 * sub2Thickness, finalColor, alpha);
     }
 
     // === 지연 영역 (uHealthValue ~ uRecoverableHealth): 노란색/빨간색 잔상 파형 ===
-    // 피격 시 녹색이 줄어들고 그 뒤에 노란색 잔상이 남아서 따라옴
     if (uv.x > uHealthValue && uv.x <= uRecoverableHealth) {
       float normalizedX = uv.x;
-
-      // 지연 영역 색상 (노란색 ~ 빨간색 그라데이션)
-      vec3 delayColor = vec3(0.9, 0.7, 0.1);  // 노란색/주황색
-
-      // 피격 강도에 따라 더 빨갛게
-      float damageBlend = max(uDamageIntensity, uShieldDamageIntensity);
-      delayColor = mix(delayColor, vec3(0.95, 0.3, 0.2), damageBlend * 0.5);
 
       // === 메인 파형 (지연 영역) ===
       float mainWaveY = mhWildsWave(uv.x, uTime, 1.0, damageBlend * 0.5, 0.0);
       float mainDist = abs(uv.y - mainWaveY);
       float thicknessMult = getWaveThickness(uv.x, uTime);
       float mainLineWidth = 0.12 * thicknessMult;
-      drawWaveLine(mainWaveY, mainDist, delayColor, mainLineWidth, 1.5 * thicknessMult, finalColor, alpha);
+      drawWaveLine(mainWaveY, mainDist, delayWaveColor, mainLineWidth, 1.5 * thicknessMult, finalColor, alpha);
 
       // === 서브 파형 1 (위쪽) ===
       float sub1Spread = sin(normalizedX * 3.14159);
@@ -342,7 +310,7 @@ const heartbeatBarFragmentShader = `
       float sub1OffsetY = sub1Spread * 0.32;
       float sub1WaveY = sub1BaseY + sub1OffsetY;
       float sub1Dist = abs(uv.y - sub1WaveY);
-      vec3 sub1Color = delayColor * 0.7;
+      vec3 sub1Color = delayWaveColor * 0.7;
       float sub1Thickness = getWaveThickness(uv.x + 0.1, uTime * 1.1);
       drawWaveLine(sub1WaveY, sub1Dist, sub1Color, 0.04 * sub1Thickness, 0.8 * sub1Thickness, finalColor, alpha);
 
@@ -352,18 +320,14 @@ const heartbeatBarFragmentShader = `
       float sub2OffsetY = -sub2Spread * 0.28;
       float sub2WaveY = sub2BaseY + sub2OffsetY;
       float sub2Dist = abs(uv.y - sub2WaveY);
-      vec3 sub2Color = delayColor * 0.6;
+      vec3 sub2Color = delayWaveColor * 0.6;
       float sub2Thickness = getWaveThickness(uv.x - 0.15, uTime * 0.9);
       drawWaveLine(sub2WaveY, sub2Dist, sub2Color, 0.024 * sub2Thickness, 0.6 * sub2Thickness, finalColor, alpha);
     }
 
     // 최대 체력 영역 (recoverable ~ max): 검은색/어두운 파형으로 표시
     if (uv.x > uRecoverableHealth && uv.x <= 1.0) {
-      // 전체 바 기준 normalizedX (0~1)
       float normalizedX = uv.x;
-
-      // 검은색/어두운 회색 파형
-      vec3 darkColor = vec3(0.15, 0.15, 0.18);
 
       // === 메인 파형 (동일한 파형, 어두운 색상) ===
       float mainWaveY = mhWildsWave(uv.x, uTime, 1.0, 0.0, 0.0);
@@ -431,22 +395,27 @@ export interface UIHeartbeatBarConfig {
   staminaDelaySpeed?: number;
 }
 
+// 플레어 타입 정의
+interface FlareData {
+  mesh: Mesh;
+  material: ShaderMaterial;
+  boundaryType: 'start' | 'health' | 'delay' | 'end';
+  waveType: 'main' | 'sub1' | 'sub2';
+}
+
 export class UIHeartbeatBar extends UIElement {
   private bar: Mesh;
   private material: ShaderMaterial;
 
-  // 플레어 데코레이션 (4개: 왼쪽 끝, 현재 체력 위치, 지연 위치, 오른쪽 끝)
-  private leftFlare: Mesh;
-  private currentFlare: Mesh;    // 현재 체력 위치 (녹색)
-  private delayedFlare: Mesh;    // 지연 게이지 위치 (노란색/빨간색 - 피격 시 잔상)
-  private rightFlare: Mesh;      // 오른쪽 끝 (max)
-  private leftFlareMaterial: ShaderMaterial;
-  private currentFlareMaterial: ShaderMaterial;
-  private delayedFlareMaterial: ShaderMaterial;
-  private rightFlareMaterial: ShaderMaterial;
+  // 12개 플레어 (경계면 4개 × 파형 3개)
+  private flares: FlareData[] = [];
 
   // 타이밍
   private globalTime: number = 0;
+
+  // 파형 계산용 설정
+  private waveSpeed: number = 0.8;
+  private waveIntensity: number = 1.0;
 
   // 체력 상태
   private targetHealth: number = 1;       // 목표 체력 (실제 값)
@@ -521,6 +490,7 @@ export class UIHeartbeatBar extends UIElement {
         uWaveColor: { value: toVec3(config.waveColor ?? 0xffffff) },             // 파형 흰색
         uWaveGlowColor: { value: toVec3(config.waveGlowColor ?? 0x7dffb3) },     // 파형 글로우
         uShieldColor: { value: toVec3(0x3b82f6) },                               // 쉴드 피격 시 파란색
+        uDelayColor: { value: toVec3(0xe6b319) },                                // 지연 영역 색상 (노란색)
 
         uLowHealthThreshold: { value: config.lowHealthThreshold ?? 0.3 },
         uWaveSpeed: { value: config.waveSpeed ?? 0.8 },
@@ -529,6 +499,10 @@ export class UIHeartbeatBar extends UIElement {
       },
     });
 
+    // 파형 설정 저장
+    this.waveSpeed = config.waveSpeed ?? 0.8;
+    this.waveIntensity = config.waveIntensity ?? 1.0;
+
     // 파형이 위아래로 크게 요동치므로 geometry 높이를 2배로 확장
     // (UV는 그대로 0~1이지만 파형이 잘리지 않도록)
     const waveHeightMultiplier = 2.0;
@@ -536,98 +510,8 @@ export class UIHeartbeatBar extends UIElement {
     this.bar = new Mesh(geometry, this.material);
     this.add(this.bar);
 
-    // 플레어 색상
-    const flareColor = toVec3(config.healthColor ?? 0x3fb950);  // 녹색
-    const darkFlareColor: [number, number, number] = [0.15, 0.15, 0.18];  // 어두운 색 (max 표시용)
-
-    const flareSize = this._height * 3.75;  // 2.5 * 1.5 = 1.5배 키움
-    const flareGeometry = new PlaneGeometry(flareSize, flareSize);
-
-    // 왼쪽 플레어 생성 (녹색 - 시작점)
-    this.leftFlareMaterial = new ShaderMaterial({
-      vertexShader: verticalFlareVertexShader,
-      fragmentShader: verticalFlareFragmentShader,
-      transparent: true,
-      blending: AdditiveBlending,
-      depthWrite: false,
-      side: DoubleSide,
-      uniforms: {
-        uTime: { value: 0 },
-        uIntensity: { value: 0.6 },
-        uColor: { value: flareColor },
-        uStreakLength: { value: 1.2 },
-        uCoreSize: { value: 0.8 },
-        uPulse: { value: 0 },
-      },
-    });
-    this.leftFlare = new Mesh(flareGeometry, this.leftFlareMaterial);
-    this.leftFlare.position.set(-this._width / 2, 0, 0.01);
-    this.add(this.leftFlare);
-
-    // 현재 체력 위치 플레어 (녹색 - 현재 체력 끝점)
-    this.currentFlareMaterial = new ShaderMaterial({
-      vertexShader: verticalFlareVertexShader,
-      fragmentShader: verticalFlareFragmentShader,
-      transparent: true,
-      blending: AdditiveBlending,
-      depthWrite: false,
-      side: DoubleSide,
-      uniforms: {
-        uTime: { value: 0 },
-        uIntensity: { value: 0.6 },
-        uColor: { value: [...flareColor] },  // 복사본
-        uStreakLength: { value: 1.2 },
-        uCoreSize: { value: 0.8 },
-        uPulse: { value: 0 },
-      },
-    });
-    this.currentFlare = new Mesh(flareGeometry.clone(), this.currentFlareMaterial);
-    this.currentFlare.position.set(this._width / 2, 0, 0.01);  // 초기에는 오른쪽 끝
-    this.add(this.currentFlare);
-
-    // 지연 플레어 (노란색/주황색 - 피격 시 잔상 위치)
-    const delayFlareColor: [number, number, number] = [0.9, 0.7, 0.1];  // 노란색/주황색
-    this.delayedFlareMaterial = new ShaderMaterial({
-      vertexShader: verticalFlareVertexShader,
-      fragmentShader: verticalFlareFragmentShader,
-      transparent: true,
-      blending: AdditiveBlending,
-      depthWrite: false,
-      side: DoubleSide,
-      uniforms: {
-        uTime: { value: 0 },
-        uIntensity: { value: 0.5 },
-        uColor: { value: delayFlareColor },
-        uStreakLength: { value: 1.0 },
-        uCoreSize: { value: 0.7 },
-        uPulse: { value: 0 },
-      },
-    });
-    this.delayedFlare = new Mesh(flareGeometry.clone(), this.delayedFlareMaterial);
-    this.delayedFlare.position.set(this._width / 2, 0, 0.01);  // 초기에는 오른쪽 끝
-    this.delayedFlare.visible = false;  // 초기에는 숨김 (지연 없을 때)
-    this.add(this.delayedFlare);
-
-    // 오른쪽 끝 플레어 (어두운 색 - max 표시)
-    this.rightFlareMaterial = new ShaderMaterial({
-      vertexShader: verticalFlareVertexShader,
-      fragmentShader: verticalFlareFragmentShader,
-      transparent: true,
-      blending: AdditiveBlending,
-      depthWrite: false,
-      side: DoubleSide,
-      uniforms: {
-        uTime: { value: 0 },
-        uIntensity: { value: 0.4 },  // 어두운 플레어는 약하게
-        uColor: { value: darkFlareColor },
-        uStreakLength: { value: 1.0 },
-        uCoreSize: { value: 0.6 },
-        uPulse: { value: 0 },
-      },
-    });
-    this.rightFlare = new Mesh(flareGeometry.clone(), this.rightFlareMaterial);
-    this.rightFlare.position.set(this._width / 2, 0, 0.01);
-    this.add(this.rightFlare);
+    // 12개 플레어 생성 (경계면 4개 × 파형 3개)
+    this.createFlares(toVec3(config.healthColor ?? 0x2ecc71));
 
     // 초기값
     this.targetHealth = config.healthValue ?? 1;
@@ -637,6 +521,69 @@ export class UIHeartbeatBar extends UIElement {
     this.targetStamina = config.staminaValue ?? 1;
     this.displayedStamina = this.targetStamina;
     this.delayedStamina = this.targetStamina;
+  }
+
+  /**
+   * 12개 플레어 Mesh 생성
+   */
+  private createFlares(healthColor: [number, number, number]): void {
+    const flareSize = this._height * 2.5;
+    const flareGeometry = new PlaneGeometry(flareSize, flareSize);
+
+    const boundaryTypes: Array<'start' | 'health' | 'delay' | 'end'> = ['start', 'health', 'delay', 'end'];
+    const waveTypes: Array<'main' | 'sub1' | 'sub2'> = ['main', 'sub1', 'sub2'];
+
+    const delayColor: [number, number, number] = [0.9, 0.7, 0.1];  // 노란색
+    const darkColor: [number, number, number] = [0.25, 0.25, 0.3]; // 어두운 색
+
+    for (const boundaryType of boundaryTypes) {
+      for (const waveType of waveTypes) {
+        // 색상 결정
+        let color: [number, number, number];
+        let intensity: number;
+
+        if (boundaryType === 'end') {
+          color = darkColor;
+          intensity = waveType === 'main' ? 0.8 : 0.55;
+        } else if (boundaryType === 'delay') {
+          color = delayColor;
+          intensity = waveType === 'main' ? 0.6 : 0.4;
+        } else {
+          color = healthColor;
+          intensity = waveType === 'main' ? 0.7 : 0.45;
+        }
+
+        const material = new ShaderMaterial({
+          vertexShader: verticalFlareVertexShader,
+          fragmentShader: verticalFlareFragmentShader,
+          transparent: true,
+          blending: AdditiveBlending,
+          depthWrite: false,
+          side: DoubleSide,
+          uniforms: {
+            uTime: { value: 0 },
+            uIntensity: { value: intensity },
+            uColor: { value: [...color] },
+            uPulse: { value: 0 },
+          },
+        });
+
+        const mesh = new Mesh(flareGeometry.clone(), material);
+        mesh.position.set(0, 0, 0.01);
+
+        // delay 플레어는 초기에 숨김
+        if (boundaryType === 'delay') {
+          mesh.visible = false;
+        }
+        // health 플레어도 체력 100%일 때는 숨김
+        if (boundaryType === 'health') {
+          mesh.visible = false;
+        }
+
+        this.add(mesh);
+        this.flares.push({ mesh, material, boundaryType, waveType });
+      }
+    }
   }
 
   /**
@@ -787,14 +734,77 @@ export class UIHeartbeatBar extends UIElement {
   }
 
   /**
+   * 노이즈 함수 (쉐이더와 동일)
+   */
+  private hash(n: number): number {
+    return (Math.sin(n) * 43758.5453) % 1;
+  }
+
+  private noise(x: number): number {
+    const i = Math.floor(x);
+    const f = x - i;
+    const ff = f * f * (3.0 - 2.0 * f);
+    return this.hash(i) * (1 - ff) + this.hash(i + 1) * ff;
+  }
+
+  /**
+   * 파형 Y 위치 계산 (쉐이더의 mhWildsWave와 동일)
+   */
+  private calculateWaveY(x: number, time: number, health: number, damageIntensity: number): number {
+    const scrollSpeed = this.waveSpeed * 0.8;
+    const scrollX = x + time * scrollSpeed;
+
+    let wave = 0.0;
+
+    // 저주파 움직임
+    wave += Math.sin(scrollX * 2.5 + time * 0.4) * 0.12;
+    wave += Math.sin(scrollX * 4.0 + time * 0.7) * 0.08;
+
+    // 중주파 노이즈
+    wave += (this.noise(scrollX * 10.0 + time * 2.5) - 0.5) * 0.1;
+    wave += (this.noise(scrollX * 15.0 - time * 1.8) - 0.5) * 0.06;
+
+    // 피격 시 고주파 파형
+    const damageWave = damageIntensity * 0.35;
+    wave += Math.sin(scrollX * 25.0 + time * 15.0) * damageWave;
+    wave += Math.sin(scrollX * 35.0 - time * 20.0) * damageWave * 0.7;
+    wave += Math.sin(scrollX * 50.0 + time * 25.0) * damageWave * 0.5;
+    wave += (this.noise(scrollX * 40.0 + time * 18.0) - 0.5) * damageWave * 0.8;
+    wave += (this.noise(scrollX * 60.0 - time * 22.0) - 0.5) * damageWave * 0.6;
+
+    // 고주파 미세 떨림
+    const tremor = Math.max((1.0 - health) * 0.1, damageIntensity * 0.2);
+    wave += (this.noise(scrollX * 45.0 + time * 12.0) - 0.5) * tremor;
+
+    wave *= this.waveIntensity;
+
+    return 0.5 + wave;
+  }
+
+  /**
+   * 특정 X 위치에서 3개 파형의 Y값 계산
+   */
+  private getWaveYPositions(x: number, time: number, health: number, damageIntensity: number): { mainY: number; sub1Y: number; sub2Y: number } {
+    const mainY = this.calculateWaveY(x, time, health, damageIntensity);
+
+    const normalizedX = x / Math.max(health, 0.01);
+    const sub1Spread = Math.sin(Math.min(Math.max(normalizedX, 0), 1) * Math.PI);
+    const sub1BaseY = this.calculateWaveY(x + 0.1, time * 1.1, health, damageIntensity);
+    const sub1Y = sub1BaseY + sub1Spread * 0.32;
+
+    const sub2Spread = Math.sin(Math.min(Math.max(normalizedX, 0), 1) * Math.PI);
+    const sub2BaseY = this.calculateWaveY(x - 0.15, time * 0.9, health, damageIntensity);
+    const sub2Y = sub2BaseY - sub2Spread * 0.28;
+
+    return { mainY, sub1Y, sub2Y };
+  }
+
+  /**
    * 매 프레임 호출
    */
   update(deltaTime: number): void {
     this.globalTime += deltaTime;
     this.material.uniforms.uTime.value = this.globalTime;
-
-    // 플레어 애니메이션 업데이트
-    this.updateFlares();
 
     // 피격 강도 감소 (서서히 녹색으로 복귀)
     if (this.damageIntensity > 0) {
@@ -836,18 +846,6 @@ export class UIHeartbeatBar extends UIElement {
     }
     this.material.uniforms.uRecoverableHealth.value = this.delayedHealth;
 
-    // 현재 체력 플레어 위치 조정 (표시되는 체력 기준)
-    const currentHealthX = -this._width / 2 + this._width * this.displayedHealth;
-    this.currentFlare.position.x = currentHealthX;
-
-    // 지연 플레어 위치 및 가시성 조정
-    const delayedHealthX = -this._width / 2 + this._width * this.delayedHealth;
-    this.delayedFlare.position.x = delayedHealthX;
-
-    // 지연 영역이 있을 때만 지연 플레어 표시 (피격 잔상)
-    const hasDelayGap = this.delayedHealth - this.displayedHealth > 0.01;
-    this.delayedFlare.visible = hasDelayGap;
-
     // === 스태미나 애니메이션 ===
     // 1. 스태미나 증가 시: displayedStamina가 targetStamina로 부드럽게 증가
     if (this.displayedStamina < this.targetStamina) {
@@ -872,84 +870,121 @@ export class UIHeartbeatBar extends UIElement {
       }
     }
     this.material.uniforms.uRecoverableStamina.value = this.delayedStamina;
+
+    // === 플레어 위치 업데이트 ===
+    this.updateFlares();
   }
 
   /**
-   * 플레어 애니메이션 업데이트
+   * 플레어 위치 및 색상 업데이트
    */
   private updateFlares(): void {
-    // 시간 업데이트
-    this.leftFlareMaterial.uniforms.uTime.value = this.globalTime;
-    this.currentFlareMaterial.uniforms.uTime.value = this.globalTime;
-    this.delayedFlareMaterial.uniforms.uTime.value = this.globalTime;
-    this.rightFlareMaterial.uniforms.uTime.value = this.globalTime;
+    const totalDamageIntensity = Math.max(this.damageIntensity, this.shieldDamageIntensity);
 
-    // 펄싱 효과 (서로 다른 위상으로)
-    const leftPulse = Math.sin(this.globalTime * 3.5) * 0.5 + 0.5;
-    const currentPulse = Math.sin(this.globalTime * 3.5 + Math.PI * 0.5) * 0.5 + 0.5;
-    const delayedPulse = Math.sin(this.globalTime * 4.0 + Math.PI * 0.75) * 0.5 + 0.5;
-    const rightPulse = Math.sin(this.globalTime * 3.5 + Math.PI * 1.0) * 0.5 + 0.5;
-
-    this.leftFlareMaterial.uniforms.uPulse.value = leftPulse;
-    this.currentFlareMaterial.uniforms.uPulse.value = currentPulse;
-    this.delayedFlareMaterial.uniforms.uPulse.value = delayedPulse;
-    this.rightFlareMaterial.uniforms.uPulse.value = rightPulse;
-
-    // 인텐시티도 약간 변동 (깜빡임 효과)
-    const baseIntensity = 0.5;
-    const flickerL = Math.sin(this.globalTime * 8.3) * 0.1 + Math.sin(this.globalTime * 13.7) * 0.05;
-    const flickerC = Math.sin(this.globalTime * 7.5 + 0.5) * 0.1 + Math.sin(this.globalTime * 11.2) * 0.05;
-    const flickerD = Math.sin(this.globalTime * 9.5 + 0.8) * 0.1 + Math.sin(this.globalTime * 14.1) * 0.05;
-    const flickerR = Math.sin(this.globalTime * 9.1 + 1.0) * 0.1 + Math.sin(this.globalTime * 12.3) * 0.05;
-
-    this.leftFlareMaterial.uniforms.uIntensity.value = baseIntensity + flickerL + leftPulse * 0.2;
-    this.currentFlareMaterial.uniforms.uIntensity.value = baseIntensity + flickerC + currentPulse * 0.2;
-    this.delayedFlareMaterial.uniforms.uIntensity.value = 0.4 + flickerD + delayedPulse * 0.3;
-    // 오른쪽 (max) 플레어는 어두우므로 약하게
-    this.rightFlareMaterial.uniforms.uIntensity.value = 0.3 + flickerR * 0.5 + rightPulse * 0.1;
-
-    // 코어 사이즈도 펄싱
-    const baseCoreSize = 0.7;
-    const minMaxCoreSize = baseCoreSize * 1.5;  // min/max 플레어 코어 1.5배
-    this.leftFlareMaterial.uniforms.uCoreSize.value = minMaxCoreSize + leftPulse * 0.45;  // 1.5배
-    this.currentFlareMaterial.uniforms.uCoreSize.value = baseCoreSize + currentPulse * 0.3;
-    this.delayedFlareMaterial.uniforms.uCoreSize.value = 0.6 + delayedPulse * 0.3;
-    this.rightFlareMaterial.uniforms.uCoreSize.value = (0.5 * 1.5) + rightPulse * 0.3;  // 1.5배
-
-    // 피격 시 녹색 플레어들(왼쪽, 현재)만 색상 변경
-    // 오른쪽 플레어는 항상 어두운 색 유지
+    // 디버그 로그 (매 프레임이 아닌 가끔만 출력)
+    if (Math.random() < 0.01) {
+      console.log('[UIHeartbeatBar] displayedHealth:', this.displayedHealth.toFixed(3),
+                  'delayedHealth:', this.delayedHealth.toFixed(3),
+                  'hasDelayGap:', (this.delayedHealth - this.displayedHealth > 0.01));
+    }
     const healthColor = this.material.uniforms.uHealthColor.value as number[];
+    const lowHealthColor = this.material.uniforms.uLowHealthColor.value as number[];
+    const shieldColor = this.material.uniforms.uShieldColor.value as number[];
+    const delayColor: [number, number, number] = [0.9, 0.7, 0.1];
+    const darkColor: [number, number, number] = [0.25, 0.25, 0.3];
 
+    // 피격 시 색상 계산
+    let currentHealthColor: number[] = [...healthColor];
     if (this.shieldDamageIntensity > 0.01) {
-      // 쉴드 피격 시 파란색
-      const blueColor: [number, number, number] = [0.23, 0.51, 0.96];
-      const mixedColor = healthColor.map((c, i) =>
-        c * (1 - this.shieldDamageIntensity) + blueColor[i] * this.shieldDamageIntensity
+      currentHealthColor = healthColor.map((c, i) =>
+        c * (1 - this.shieldDamageIntensity) + shieldColor[i] * this.shieldDamageIntensity
       );
-      this.leftFlareMaterial.uniforms.uColor.value = mixedColor;
-      this.currentFlareMaterial.uniforms.uColor.value = mixedColor;
     } else if (this.damageIntensity > 0.01) {
-      // 체력 피격 시 빨간색
-      const redColor: [number, number, number] = [0.97, 0.32, 0.29];
-      const mixedColor = healthColor.map((c, i) =>
-        c * (1 - this.damageIntensity) + redColor[i] * this.damageIntensity
+      currentHealthColor = healthColor.map((c, i) =>
+        c * (1 - this.damageIntensity) + lowHealthColor[i] * this.damageIntensity
       );
-      this.leftFlareMaterial.uniforms.uColor.value = mixedColor;
-      this.currentFlareMaterial.uniforms.uColor.value = mixedColor;
-    } else {
-      // 기본 녹색으로 복귀
-      this.leftFlareMaterial.uniforms.uColor.value = healthColor;
-      this.currentFlareMaterial.uniforms.uColor.value = healthColor;
     }
 
-    // 지연 플레어 색상 (피격 강도에 따라 노란색 → 빨간색)
-    const delayBaseColor: [number, number, number] = [0.9, 0.7, 0.1];  // 노란색
-    const delayDamageColor: [number, number, number] = [0.95, 0.3, 0.2];  // 빨간색
+    // 지연 색상 (피격 강도에 따라 노란색 → 빨간색)
     const damageBlend = Math.max(this.damageIntensity, this.shieldDamageIntensity);
-    const delayColor = delayBaseColor.map((c, i) =>
-      c * (1 - damageBlend * 0.5) + delayDamageColor[i] * damageBlend * 0.5
+    const currentDelayColor = delayColor.map((c, i) =>
+      c * (1 - damageBlend * 0.5) + [0.95, 0.3, 0.2][i] * damageBlend * 0.5
     );
-    this.delayedFlareMaterial.uniforms.uColor.value = delayColor;
+
+    // 지연 영역이 있는지 확인
+    const hasDelayGap = this.delayedHealth - this.displayedHealth > 0.01;
+
+    for (const flare of this.flares) {
+      // 시간 업데이트
+      flare.material.uniforms.uTime.value = this.globalTime;
+
+      // 펄싱 효과
+      const pulse = Math.sin(this.globalTime * 3.5 + Math.random() * 0.1) * 0.5 + 0.5;
+      flare.material.uniforms.uPulse.value = pulse;
+
+      // 경계면 X 위치 결정
+      let boundaryX: number;
+      let health: number;
+      let damage: number;
+      let visible = true;
+
+      switch (flare.boundaryType) {
+        case 'start':
+          boundaryX = 0;
+          health = this.displayedHealth;
+          damage = totalDamageIntensity;
+          flare.material.uniforms.uColor.value = currentHealthColor;
+          break;
+        case 'health':
+          boundaryX = this.displayedHealth;
+          health = this.displayedHealth;
+          damage = totalDamageIntensity;
+          // 체력이 0보다 크고 1보다 작을 때 표시 (양 끝 제외)
+          visible = this.displayedHealth > 0.005 && this.displayedHealth < 0.995;
+          flare.material.uniforms.uColor.value = currentHealthColor;
+          break;
+        case 'delay':
+          boundaryX = this.delayedHealth;
+          health = 1.0;
+          damage = damageBlend * 0.5;
+          // 지연 갭이 있을 때만 표시 (health와 delay 사이에 간격이 있을 때)
+          visible = hasDelayGap;
+          flare.material.uniforms.uColor.value = currentDelayColor;
+          break;
+        case 'end':
+          boundaryX = 1.0;
+          health = 1.0;
+          damage = 0;
+          flare.material.uniforms.uColor.value = darkColor;
+          break;
+      }
+
+      flare.mesh.visible = visible;
+
+      if (visible) {
+        // 파형 Y 위치 계산
+        const wavePositions = this.getWaveYPositions(boundaryX, this.globalTime, health, damage);
+
+        let waveY: number;
+        switch (flare.waveType) {
+          case 'main':
+            waveY = wavePositions.mainY;
+            break;
+          case 'sub1':
+            waveY = wavePositions.sub1Y;
+            break;
+          case 'sub2':
+            waveY = wavePositions.sub2Y;
+            break;
+        }
+
+        // UV 좌표(0~1)를 월드 좌표로 변환
+        const worldX = -this._width / 2 + boundaryX * this._width;
+        const worldY = (waveY - 0.5) * this._height;
+
+        flare.mesh.position.set(worldX, worldY, 0.01);
+      }
+    }
   }
 
   /**
@@ -994,22 +1029,12 @@ export class UIHeartbeatBar extends UIElement {
     const waveHeightMultiplier = 2.0;
     this.bar.geometry = new PlaneGeometry(width, height * waveHeightMultiplier);
 
-    // 플레어 위치 업데이트
-    this.leftFlare.position.x = -width / 2;
-    this.currentFlare.position.x = -width / 2 + width * this.displayedHealth;
-    this.delayedFlare.position.x = -width / 2 + width * this.delayedHealth;
-    this.rightFlare.position.x = width / 2;
-
     // 플레어 크기 업데이트
-    const flareSize = height * 3.75;  // 2.5 * 1.5 = 1.5배 키움
-    this.leftFlare.geometry.dispose();
-    this.currentFlare.geometry.dispose();
-    this.delayedFlare.geometry.dispose();
-    this.rightFlare.geometry.dispose();
-    this.leftFlare.geometry = new PlaneGeometry(flareSize, flareSize);
-    this.currentFlare.geometry = new PlaneGeometry(flareSize, flareSize);
-    this.delayedFlare.geometry = new PlaneGeometry(flareSize, flareSize);
-    this.rightFlare.geometry = new PlaneGeometry(flareSize, flareSize);
+    const flareSize = height * 2.5;
+    for (const flare of this.flares) {
+      flare.mesh.geometry.dispose();
+      flare.mesh.geometry = new PlaneGeometry(flareSize, flareSize);
+    }
 
     return this;
   }
@@ -1041,13 +1066,10 @@ export class UIHeartbeatBar extends UIElement {
     this.bar.geometry.dispose();
 
     // 플레어 리소스 정리
-    this.leftFlareMaterial.dispose();
-    this.currentFlareMaterial.dispose();
-    this.delayedFlareMaterial.dispose();
-    this.rightFlareMaterial.dispose();
-    this.leftFlare.geometry.dispose();
-    this.currentFlare.geometry.dispose();
-    this.delayedFlare.geometry.dispose();
-    this.rightFlare.geometry.dispose();
+    for (const flare of this.flares) {
+      flare.material.dispose();
+      flare.mesh.geometry.dispose();
+    }
+    this.flares = [];
   }
 }

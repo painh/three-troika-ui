@@ -12,11 +12,57 @@ export interface UIFloatingTextConfig {
   fadeStartRatio?: number;
   /** 외곽선 너비 */
   outlineWidth?: number;
-  /** 외곽선 색상 */
+  /** 외곽선 색상 (짙은 색상, 테두리) */
   outlineColor?: number | string;
   /** 완료 시 콜백 */
   onComplete?: () => void;
 }
+
+/**
+ * 몬스터 헌터 스타일 색상 설정
+ * strokeColor: 짙은 색상 (외곽선)
+ * fillColor: 밝은 색상 (내부)
+ */
+export interface MonsterHunterStyleColors {
+  strokeColor: number | string;  // 외곽선 (짙은 색상)
+  fillColor: number | string;    // 내부 (밝은 색상)
+}
+
+/**
+ * 미리 정의된 몬스터 헌터 스타일 색상 프리셋
+ */
+export const MH_DAMAGE_COLORS = {
+  // 물리 데미지: 밝은 빨강 내부 + 짙은 빨강 외곽선
+  physical: {
+    fillColor: 0xffaaaa,
+    strokeColor: 0x990000,
+  },
+  // 실드 데미지: 밝은 파랑 내부 + 짙은 파랑 외곽선
+  shield: {
+    fillColor: 0xaaddff,
+    strokeColor: 0x0066bb,
+  },
+  // 합산 데미지 (일반 적): 밝은 노랑 내부 + 짙은 주황 외곽선
+  combined: {
+    fillColor: 0xffffaa,
+    strokeColor: 0xbb6600,
+  },
+  // 보스 데미지: 밝은 주황 내부 + 짙은 빨강 외곽선
+  boss: {
+    fillColor: 0xffcc88,
+    strokeColor: 0x992200,
+  },
+  // 플레이어 데미지: 밝은 빨강 내부 + 짙은 빨강 외곽선
+  player: {
+    fillColor: 0xffbbbb,
+    strokeColor: 0x770000,
+  },
+  // 방어됨: 밝은 파랑 내부 + 짙은 파랑 외곽선
+  blocked: {
+    fillColor: 0xbbddff,
+    strokeColor: 0x004488,
+  },
+} as const;
 
 /**
  * 떠오르면서 사라지는 텍스트 (데미지 표시 등)
@@ -45,6 +91,15 @@ export class UIFloatingText extends UIText {
     this.duration = config.duration ?? 1.0;
     this.fadeStartRatio = config.fadeStartRatio ?? 0.3;
     this.onCompleteCallback = config.onComplete ?? null;
+  }
+
+  /**
+   * 몬스터 헌터 스타일로 색상 설정 (밝은 내부 + 짙은 외곽선)
+   */
+  setMHColors(colors: MonsterHunterStyleColors): this {
+    this.setColor(colors.fillColor);
+    this.setOutline(this.text.outlineWidth ?? 0.02, colors.strokeColor);
+    return this;
   }
 
   /**
