@@ -524,7 +524,10 @@ export class UIHeartbeatBar extends UIElement {
       },
     });
 
-    const geometry = new PlaneGeometry(this._width, this._height);
+    // 파형이 위아래로 크게 요동치므로 geometry 높이를 2배로 확장
+    // (UV는 그대로 0~1이지만 파형이 잘리지 않도록)
+    const waveHeightMultiplier = 2.0;
+    const geometry = new PlaneGeometry(this._width, this._height * waveHeightMultiplier);
     this.bar = new Mesh(geometry, this.material);
     this.add(this.bar);
 
@@ -982,7 +985,9 @@ export class UIHeartbeatBar extends UIElement {
     this._width = width;
     this._height = height;
     this.bar.geometry.dispose();
-    this.bar.geometry = new PlaneGeometry(width, height);
+    // 파형이 위아래로 크게 요동치므로 geometry 높이를 2배로 확장
+    const waveHeightMultiplier = 2.0;
+    this.bar.geometry = new PlaneGeometry(width, height * waveHeightMultiplier);
 
     // 플레어 위치 업데이트
     this.leftFlare.position.x = -width / 2;
