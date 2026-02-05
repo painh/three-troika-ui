@@ -171,29 +171,35 @@ const flameFragmentShader = `
     float dist = length(uv) * 2.0;
     float angle = atan(uv.y, uv.x);
 
-    // 기본 반경 (게이지에 딱 붙게 - corona와 동일)
+    // 기본 반경
     float baseInner = 0.72;
     float baseOuter = 0.5;
 
-    // 좌우 방향 강조 (cos(angle)이 크면 좌우)
-    float sideStrength = abs(cos(angle));
-    // 위쪽 방향 (sin(angle) > 0)
+    // 위쪽 방향 (sin(angle) > 0이면 위쪽)
     float upStrength = max(0.0, sin(angle));
+    // 아래쪽 방향도 약간의 불꽃
+    float downStrength = max(0.0, -sin(angle));
+    // 좌우 방향 - 위로 갈수록 약해짐
+    float sideStrength = abs(cos(angle)) * (1.0 - upStrength * 0.6);
 
-    // 불꽃 높이 - 좌우에서 시작해서 위로 올라감
-    float flameHeight = sideStrength * 0.3 + upStrength * 0.15;
+    // 랜덤 좌우 흔들림 (위로 갈수록 더 흔들림)
+    float wobble = fbm(vec2(angle * 2.0 + uTime * 3.0, uTime * 2.0)) * 0.15 * upStrength;
+
+    // 불꽃 높이 - 위쪽 줄이고 균형 조정
+    float flameHeight = upStrength * 0.18 + sideStrength * 0.12 + downStrength * 0.08;
 
     // 불꽃 노이즈 - 위로 흘러가는 느낌
-    float flameNoise1 = fbm(vec2(angle * 4.0, uTime * 4.0 - dist * 3.0)) * 0.2;
-    float flameNoise2 = fbm(vec2(angle * 6.0 - uTime * 0.5, uTime * 5.0 - dist * 4.0)) * 0.15;
-    float flameNoise3 = fbm(vec2(angle * 10.0 + uTime * 2.0, uTime * 3.5 - dist * 5.0)) * 0.1;
+    float flameNoise1 = fbm(vec2(angle * 4.0 + wobble, uTime * 4.0 - dist * 3.0)) * 0.15;
+    float flameNoise2 = fbm(vec2(angle * 6.0 - uTime * 0.5 + wobble, uTime * 5.0 - dist * 4.0)) * 0.10;
+    float flameNoise3 = fbm(vec2(angle * 10.0 + uTime * 2.0, uTime * 3.5 - dist * 5.0)) * 0.08;
 
-    // 좌우에서 불꽃이 더 크게
-    float sideFlame = sideStrength * (flameNoise1 + flameNoise2) * 1.5;
-    // 위로 올라가는 불꽃
-    float risingFlame = upStrength * flameNoise3 * 2.0;
+    // 위로 올라가는 불꽃 (줄임)
+    float risingFlame = upStrength * (flameNoise1 + flameNoise2) * 0.9;
+    // 좌우/아래 불꽃은 보조
+    float sideFlame = sideStrength * flameNoise3 * 0.8;
+    float downFlame = downStrength * flameNoise1 * 0.4;
 
-    float totalFlame = flameHeight + sideFlame + risingFlame + flameNoise1 * 0.5;
+    float totalFlame = flameHeight + risingFlame + sideFlame + downFlame + flameNoise1 * 0.2;
 
     // 내부/외부 반경
     float innerRadius = baseInner * uProgress;
@@ -313,7 +319,7 @@ export class UICircularGauge extends Group {
   private coronaTime: number = 0;
   private coronaProgress: number = 0; // 0: 숨김, 1: 완전히 표시
   private coronaTargetProgress: number = 0;
-  private coronaAnimSpeed: number = 4; // 애니메이션 속도
+  private coronaAnimSpeed: number = 1; // 애니메이션 속도 (작을수록 느림)
 
   // 상태
   private progress: number = 0; // 0~1
@@ -646,20 +652,18 @@ export class UICircularGauge extends Group {
         this.coronaProgress += Math.sign(diff) * change;
       }
 
-      // easeOutBack 효과 (나타날 때 살짝 튀어나왔다 들어감)
+      // easing 효과
       let displayProgress = this.coronaProgress;
       if (this.coronaTargetProgress > 0) {
-        // 나타날 때: easeOutBack
+        // 나타날 때: easeOutBack (살짝 튀어나왔다 들어감)
         const t = this.coronaProgress;
         const c1 = 1.70158;
         const c3 = c1 + 1;
         displayProgress = 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
       } else {
-        // 사라질 때: easeInBack
+        // 사라질 때: easeInCubic (점점 작아지며 사라짐 - 불꽃처럼)
         const t = this.coronaProgress;
-        const c1 = 1.70158;
-        const c3 = c1 + 1;
-        displayProgress = c3 * t * t * t - c1 * t * t;
+        displayProgress = t * t * t;
       }
 
       this.coronaMaterial.uniforms.uProgress.value = Math.max(0, displayProgress);
