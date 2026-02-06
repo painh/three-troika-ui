@@ -82,11 +82,25 @@ export class UIText extends UIElement {
   }
 
   /**
+   * 텍스트 내용 반환
+   */
+  getText(): string {
+    return this.textMesh.text;
+  }
+
+  /**
    * 텍스트 색상 설정
    */
   setColor(color: number | string): this {
     this.textMesh.color = color;
     return this;
+  }
+
+  /**
+   * 텍스트 색상 반환
+   */
+  getColor(): number {
+    return typeof this.textMesh.color === 'number' ? this.textMesh.color : 0xffffff;
   }
 
   /**
