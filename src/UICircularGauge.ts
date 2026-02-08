@@ -27,8 +27,6 @@ const glowVertexShader = `
 `;
 
 // Solar Corona 쉐이더 - 일식의 금환고리 효과
-const coronaVertexShader = glowVertexShader;
-
 const coronaFragmentShader = `
   uniform float uTime;
   uniform float uProgress; // 0: 시작(작음), 1: 완전히 펼쳐짐
