@@ -161,15 +161,20 @@ export class UIPanel extends UIElement {
 
     let spacing = this._gap;
 
+    // vertical: mainStart는 상단(+), 아이템이 아래로(-) 쌓임
+    // horizontal: mainStart는 좌측(-), 아이템이 오른쪽으로(+) 쌓임
+    const isVertical = this._direction === 'vertical';
+    const sign = isVertical ? -1 : 1;
+
     switch (this._justify) {
       case 'start':
         mainPos = mainStart;
         break;
       case 'center':
-        mainPos = mainStart + (mainSize - totalMainSize) / 2;
+        mainPos = mainStart + sign * (mainSize - totalMainSize) / 2;
         break;
       case 'end':
-        mainPos = mainStart + mainSize - totalMainSize;
+        mainPos = mainStart + sign * (mainSize - totalMainSize);
         break;
       case 'space-between':
         mainPos = mainStart;
@@ -179,7 +184,7 @@ export class UIPanel extends UIElement {
         break;
       case 'space-around':
         spacing = (mainSize - (totalMainSize - this._gap * (this._children.length - 1))) / (this._children.length + 1);
-        mainPos = mainStart + spacing;
+        mainPos = mainStart + sign * spacing;
         break;
     }
 

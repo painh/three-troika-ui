@@ -21,3 +21,29 @@ export { UIScrollView, type UIScrollViewConfig } from './UIScrollView';
 export { UISlider, type UISliderConfig } from './UISlider';
 export { UICheckbox, type UICheckboxConfig } from './UICheckbox';
 export { UIToggle, type UIToggleConfig } from './UIToggle';
+
+// Scene System
+export { UISceneLoader, type UISceneLoadResult } from './UISceneLoader';
+export { UISceneSerializer } from './UISceneSerializer';
+export type {
+  UISceneDef,
+  UINodeDef,
+  UINodeDefBase,
+  UIBoxDef,
+  UITextDef,
+  UIImageDef,
+  UI9SliceDef,
+  UIPanelDef,
+  UIButtonDef,
+  UIProgressBarDef,
+  UIShaderBarDef,
+  UIHeartbeatBarDef,
+  UICircularGaugeDef,
+  UIFloatingTextDef,
+  UITooltipDef,
+  UIScrollViewDef,
+  UISliderDef,
+  UICheckboxDef,
+  UIToggleDef,
+  UISceneRefDef,
+} from './UISceneTypes';
