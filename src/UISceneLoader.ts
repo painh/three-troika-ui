@@ -104,7 +104,8 @@ export class UISceneLoader {
       for (const childDef of nodeDef.children) {
         const child = await UISceneLoader._createNode(childDef, basePath, ids);
         if (element instanceof UIPanel) {
-          // UIPanel은 레이아웃 관리 포함
+          // position이 명시된 자식은 절대 위치 플래그 설정 (layout에서 제외)
+          if (childDef.position) child.userData.absolutePosition = true;
           element.addChild(child);
         } else {
           element.add(child);

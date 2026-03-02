@@ -125,11 +125,12 @@ export class UIPanel extends UIElement {
     const contentWidth = this._width - paddingLeft - paddingRight;
     const contentHeight = this._height - paddingTop - paddingBottom;
 
-    // 자식들의 총 크기 계산
+    // 자식들의 총 크기 계산 (절대 위치 지정 자식 제외)
+    const layoutChildren = this._children.filter(c => !c.userData?.absolutePosition);
     let totalMainSize = 0;
     let maxCrossSize = 0;
 
-    for (const child of this._children) {
+    for (const child of layoutChildren) {
       if (this._direction === 'horizontal') {
         totalMainSize += child.width;
         maxCrossSize = Math.max(maxCrossSize, child.height);
@@ -138,7 +139,7 @@ export class UIPanel extends UIElement {
         maxCrossSize = Math.max(maxCrossSize, child.width);
       }
     }
-    totalMainSize += this._gap * (this._children.length - 1);
+    totalMainSize += this._gap * (layoutChildren.length - 1);
 
     // autoSize면 크기 조절
     if (this._autoSize) {
@@ -178,18 +179,18 @@ export class UIPanel extends UIElement {
         break;
       case 'space-between':
         mainPos = mainStart;
-        if (this._children.length > 1) {
-          spacing = (mainSize - (totalMainSize - this._gap * (this._children.length - 1))) / (this._children.length - 1);
+        if (layoutChildren.length > 1) {
+          spacing = (mainSize - (totalMainSize - this._gap * (layoutChildren.length - 1))) / (layoutChildren.length - 1);
         }
         break;
       case 'space-around':
-        spacing = (mainSize - (totalMainSize - this._gap * (this._children.length - 1))) / (this._children.length + 1);
+        spacing = (mainSize - (totalMainSize - this._gap * (layoutChildren.length - 1))) / (layoutChildren.length + 1);
         mainPos = mainStart + sign * spacing;
         break;
     }
 
-    // 자식들 배치
-    for (const child of this._children) {
+    // 자식들 배치 (절대 위치 지정 자식 제외)
+    for (const child of layoutChildren) {
       const childMainSize = this._direction === 'horizontal' ? child.width : child.height;
       const childCrossSize = this._direction === 'horizontal' ? child.height : child.width;
 
