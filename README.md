@@ -465,6 +465,173 @@ function update(deltaTime: number) {
 - `start()`: Start float animation
 - `update(deltaTime)`: Update animation
 
+## Scene System (UI Scene Editor)
+
+UI 위젯 트리를 JSON 파일로 저장하고 런타임에 로드하는 시스템입니다.
+별도의 **UI Scene Editor** (http://localhost:4174)에서 시각적으로 편집하고 저장할 수 있습니다.
+
+### JSON Scene 형식
+
+```json
+{
+  "version": "1.0",
+  "name": "BossHealthBar",
+  "root": {
+    "type": "UIShaderBar",
+    "id": "boss_hp_bar",
+    "name": "Boss HP Bar",
+    "props": {
+      "width": 12,
+      "height": 0.3,
+      "value": 1,
+      "fillColor": 11993626
+    },
+    "position": [0, 0, 0],
+    "children": [
+      {
+        "type": "UIText",
+        "id": "boss_name",
+        "props": {
+          "text": "",
+          "fontSize": 0.35,
+          "color": 16777215,
+          "anchorX": "center",
+          "anchorY": "bottom"
+        },
+        "position": [0, 0.25, 0.01]
+      }
+    ]
+  }
+}
+```
+
+지원 위젯 타입: `UIPanel`, `UIBox`, `UIText`, `UIImage`, `UI9Slice`, `UIButton`,
+`UIProgressBar`, `UIShaderBar`, `UIHeartbeatBar`, `UICircularGauge`,
+`UIFloatingText`, `UITooltip`, `UIScrollView`, `UISlider`, `UICheckbox`, `UIToggle`, `UISceneRef`
+
+### UISceneLoader - JSON에서 씬 로드
+
+```typescript
+import { UISceneLoader } from 'three-troika-ui';
+
+// URL에서 씬 JSON 로드
+const { root, ids } = await UISceneLoader.load('/ui-scenes/game/boss-health-bar.json');
+
+// 씬을 Three.js 씬에 추가
+scene.add(root);
+
+// id로 특정 위젯 접근
+const hpBar = ids.get('boss_hp_bar') as UIShaderBar;
+const nameText = ids.get('boss_name') as UIText;
+
+hpBar?.setValue(0.75);
+nameText?.setText('Dragon Lord');
+```
+
+### UISceneRef - 씬 중첩 (프리팹)
+
+JSON 내에서 다른 씬 파일을 참조하여 재사용할 수 있습니다:
+
+```json
+{
+  "type": "UISceneRef",
+  "id": "hp_bar_ref",
+  "src": "/ui-scenes/hud/player-hp.json"
+}
+```
+
+### initFromScene() 패턴
+
+기존 코드의 위젯을 JSON 씬으로 선택적으로 교체하는 패턴입니다.
+constructor는 동기 상태 유지, 선택적 async 초기화로 JSON 스타일 적용:
+
+```typescript
+export class BossHealthBar extends Group {
+  private shaderBar: UIShaderBar;
+  private nameText: UIText;
+
+  constructor() {
+    super();
+    // 기본 위젯 생성 (동기)
+    this.shaderBar = new UIShaderBar({ width: 12, height: 0.3, value: 1 });
+    this.nameText = new UIText({ text: '', fontSize: 0.35 });
+    this.add(this.shaderBar);
+  }
+
+  // JSON 씬에서 위젯 교체 (optional)
+  async initFromScene(): Promise<void> {
+    try {
+      const { ids } = await UISceneLoader.load('/ui-scenes/game/boss-health-bar.json');
+      const barFromScene = ids.get('boss_hp_bar') as UIShaderBar | undefined;
+      if (!barFromScene) return;
+
+      this.remove(this.shaderBar);
+      this.shaderBar = barFromScene;
+      this.add(this.shaderBar);
+    } catch (e) {
+      console.warn('[BossHealthBar] initFromScene failed, using defaults:', e);
+    }
+  }
+}
+
+// 사용
+const bar = new BossHealthBar();      // 즉시 사용 가능
+await bar.initFromScene();            // JSON 스타일 적용 (optional)
+```
+
+### UISceneSerializer - 씬 직렬화
+
+```typescript
+import { UISceneSerializer, UISceneDef } from 'three-troika-ui';
+
+// UISceneDef를 JSON 문자열로
+const json = UISceneSerializer.serialize(sceneDef);
+
+// JSON 문자열에서 UISceneDef로
+const def = UISceneSerializer.deserialize(json);
+
+// 빈 씬 생성
+const empty = UISceneSerializer.createEmpty('MyScene');
+
+// 모든 id 수집
+const ids = UISceneSerializer.collectIds(sceneDef);
+
+// id로 노드 찾기
+const node = UISceneSerializer.findById(sceneDef, 'boss_hp_bar');
+```
+
+### UI Scene Editor
+
+별도 앱으로 실행되는 시각적 씬 편집기입니다.
+
+```bash
+bun run ui-editor    # http://localhost:4174
+```
+
+**기능:**
+- 위젯 계층(Hierarchy) 트리 편집
+- Three.js 실시간 미리보기 (OrthographicCamera)
+- 위젯 속성 편집 (Inspector)
+- 씬 파일 CRUD (`public/ui-scenes/**/*.json`)
+- Undo/Redo (Ctrl+Z / Ctrl+Y)
+- 뷰포트 클릭으로 위젯 선택 (레이캐스트)
+- 드래그앤드롭으로 계층 순서 변경
+
+씬 파일은 `public/ui-scenes/` 경로에 JSON으로 저장되며,
+게임 런타임에서 `UISceneLoader.load()`로 직접 fetch하여 사용합니다.
+
+```
+public/ui-scenes/
+├── hud/
+│   ├── main.json          # 메인 HUD (FPS, 버튼 등)
+│   ├── player-hp.json     # 플레이어 HP바
+│   └── character-info.json
+└── game/
+    ├── boss-health-bar.json
+    ├── shop-layout.json
+    └── center-banner.json
+```
+
 ## Architecture
 
 ### Separate Camera System
